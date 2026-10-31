@@ -257,14 +257,15 @@ export async function startServer(initialSettings: RelaunchSettings): Promise<vo
     broadcastState();
   }
 
-  async function stopWatching() {
+  /** `forRestart` keeps the persisted watching flag so the next start resumes watching. */
+  async function stopWatching(forRestart = false) {
     const w = watcher;
     watcher = null;
     if (w) {
       watchStopped = true;
       await w.stop(); // runs onLoopEnd for an in-progress run
     }
-    await persist();
+    if (!forRestart) await persist();
     broadcastState();
   }
 
@@ -293,7 +294,7 @@ export async function startServer(initialSettings: RelaunchSettings): Promise<vo
     log.info("restarting with the new version…");
     broadcastState();
     setTimeout(() => {
-      void stopWatching().finally(() => process.exit(0));
+      void stopWatching(true).finally(() => process.exit(0));
     }, 500);
   }
 
@@ -473,7 +474,7 @@ export async function startServer(initialSettings: RelaunchSettings): Promise<vo
   }
 
   const shutdown = () => {
-    void stopWatching().finally(() => process.exit(0));
+    void stopWatching(true).finally(() => process.exit(0));
   };
   process.once("SIGINT", shutdown);
   process.once("SIGTERM", shutdown);
