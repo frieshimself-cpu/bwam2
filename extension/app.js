@@ -188,8 +188,17 @@ function initDashboard({ apiBase, token, onUnauthorized }) {
     api("/api/state")
       .then(() => connect())
       .catch((err) => {
-        $("status").textContent = /401/.test(err.message) ? "needs API token" : "backend unreachable";
+        const needsToken = /401/.test(err.message);
+        $("status").textContent = needsToken ? "needs API token" : "not connected";
         $("status").className = "pill err";
+        const notice = $("notice");
+        notice.hidden = false;
+        notice.textContent = needsToken
+          ? "The server wants its API token. Open Advanced → Backend, paste the token and press Connect."
+          : `Can't reach the server at ${API || window.location.origin}. Open Advanced → Backend, enter the server address and token, press Connect.`;
+        $("start").disabled = true;
+        const advanced = $("advanced");
+        if (advanced && $("backend-url")) advanced.open = true;
         fail(err);
       });
   }
