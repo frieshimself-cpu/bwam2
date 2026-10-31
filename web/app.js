@@ -250,6 +250,27 @@ function initDashboard({ apiBase, token, onUnauthorized }) {
     if (!mint) return;
     api("/api/relaunch", { mint }).then(render).catch(fail);
   });
+  const showImport = (on) => {
+    $("import-row").hidden = !on;
+    $("import-hint").hidden = !on;
+    if (on) $("import-key").focus();
+    else $("import-key").value = "";
+  };
+  $("import-wallet").addEventListener("click", () => showImport($("import-row").hidden));
+  $("import-cancel").addEventListener("click", () => showImport(false));
+  $("import-save").addEventListener("click", () => {
+    const secretKey = $("import-key").value.trim();
+    if (!secretKey) return;
+    api("/api/launch-wallet", { secretKey })
+      .then((next) => {
+        showImport(false);
+        render(next);
+      })
+      .catch(fail);
+  });
+  $("import-key").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") $("import-save").click();
+  });
   $("sell-all").addEventListener("click", () => {
     const testing = state && state.settings.dryRun;
     if (!window.confirm(testing

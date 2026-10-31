@@ -120,6 +120,8 @@ The dashboard is one card:
 3. **Test mode** – tick it to simulate every copy without sending anything; untick for real.
 4. **Save & start.** From then on, launch on pump.fun from any of those wallets exactly as you normally do: the launch is detected within a second, its parameters are read from the create transaction, and the copy goes out from the launch wallet immediately. If the copy gets no outside buys within the window, it relaunches again, up to the configured number of copies. The current run and every mint it produced show up live, with pump.fun links.
 
+**Import wallet** (next to the launch wallet) lets you deploy from a wallet you already own instead of the generated one: paste its private key once, it is stored only in the server's `.env`, and copies, dev buys and creator fees land in that wallet from then on. **Sell held coins → SOL** liquidates whatever the launch wallet holds back to SOL on the bonding curves (and closes the empty token accounts).
+
 **Advanced** (collapsed) holds the relaunch policy (copies per launch, wait between copies, stop-on-buys, instant copy), priority fee and Jito, **Relaunch an existing coin** (paste any pump.fun mint to copy it right now), the run history, and the **Update server** button.
 
 ### The extension

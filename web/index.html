@@ -27,9 +27,15 @@
         <button id="stop-run" class="danger" hidden>Stop current run</button>
       </div>
       <dl class="kv">
-        <dt>Launch wallet</dt><dd id="launcher">—</dd>
+        <dt>Launch wallet</dt><dd><span id="launcher">—</span> <button id="import-wallet" class="small">Import wallet</button></dd>
         <dt>Balance</dt><dd><span id="balance">—</span> <button id="sell-all" class="small">Sell held coins → SOL</button></dd>
       </dl>
+      <div id="import-row" class="row" hidden>
+        <input id="import-key" type="password" placeholder="private key of the wallet to deploy from (Phantom → export private key)" spellcheck="false" autocomplete="off" />
+        <button id="import-save" class="primary">Use this wallet</button>
+        <button id="import-cancel">Cancel</button>
+      </div>
+      <p id="import-hint" class="hint" hidden>The key is sent once over HTTPS and stored only in the server's .env. Copies, dev buys and creator fees then land in this wallet, so you sell from Phantom as usual.</p>
       <p id="notice" class="notice" hidden></p>
     </section>
 

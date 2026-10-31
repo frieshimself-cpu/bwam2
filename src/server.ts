@@ -3,8 +3,9 @@
 // developer wallet, settings and run history under DATA_DIR.
 import { execFile } from "node:child_process";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { extname, resolve } from "node:path";
+import { chainCache } from "./cache.js";
 import { promisify } from "node:util";
 import { Connection, Keypair, LAMPORTS_PER_SOL, PublicKey } from "@solana/web3.js";
 import { mergeSettings, serverSettingsFromEnv, type RelaunchSettings } from "./config.js";
@@ -60,7 +61,7 @@ interface PersistedState {
 const execFileAsync = promisify(execFile);
 
 const HISTORY_LIMIT = 50;
-const VERSION = "2026-10-31.8";
+const VERSION = "2026-10-31.9";
 const STATIC_TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
@@ -284,6 +285,39 @@ export async function startServer(initialSettings: RelaunchSettings): Promise<vo
     broadcastState();
   }
 
+  /** Stores a new launch wallet key in .env (and nowhere else) and switches to it live. */
+  async function importLaunchWallet(raw: string) {
+    let keypair: Keypair;
+    try {
+      keypair = loadWallet(raw);
+    } catch {
+      throw new HttpError(400, "not a valid private key (paste the base58 key Phantom exports, or a JSON byte array)");
+    }
+    const envFile = resolve(process.cwd(), ".env");
+    const line = `WALLET_PRIVATE_KEY=${raw.replace(/\s+/g, "")}`;
+    let text = "";
+    try {
+      text = await readFile(envFile, "utf8");
+    } catch {
+      // no .env yet
+    }
+    text = /^WALLET_PRIVATE_KEY=.*$/m.test(text)
+      ? text.replace(/^WALLET_PRIVATE_KEY=.*$/m, line)
+      : text + (text === "" || text.endsWith("\n") ? "" : "\n") + line + "\n";
+    await writeFile(envFile, text);
+    await chmod(envFile, 0o600).catch(() => undefined);
+
+    const wasWatching = watchers.length > 0;
+    if (wasWatching) await stopWatching();
+    launcher = keypair;
+    launcherError = "";
+    balanceCache = null;
+    if (connection) chainCache(connection).invalidateBalance(keypair.publicKey);
+    log.info(`launch wallet set to ${keypair.publicKey.toBase58()} (its key is stored only in .env on this server)`);
+    if (wasWatching) startWatching();
+    await persist();
+  }
+
   /** Replaces the list of wallets to copy; restarts the watchers if they were running. */
   async function setDevWallets(raw: unknown) {
     const list = (Array.isArray(raw) ? raw : String(raw ?? "").split(/[\s,]+/))
@@ -411,6 +445,14 @@ export async function startServer(initialSettings: RelaunchSettings): Promise<vo
       case "POST /api/dev-wallets": {
         const body = await readJsonBody(req);
         await setDevWallets(body.addresses);
+        return stateJson();
+      }
+      case "POST /api/launch-wallet": {
+        const body = await readJsonBody(req);
+        const raw = typeof body.secretKey === "string" ? body.secretKey.trim() : "";
+        if (!raw) throw new HttpError(400, "paste the wallet's private key");
+        if (current) throw new HttpError(409, "a run is in progress; wait for it to finish");
+        await importLaunchWallet(raw);
         return stateJson();
       }
       case "POST /api/dev-wallet": {
