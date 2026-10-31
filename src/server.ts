@@ -13,6 +13,7 @@ import { paramsFromMint } from "./metadata.js";
 import { describeParams, pumpUrl, type LaunchParams } from "./pump.js";
 import { relaunchUntilBought, type Launch, type WindowResult } from "./relaunch.js";
 import { makeConnection } from "./rpc.js";
+import { sellAll } from "./sell.js";
 import { loadWallet } from "./wallet.js";
 import { watchWallet, type WatchHandle } from "./watch.js";
 
@@ -59,7 +60,7 @@ interface PersistedState {
 const execFileAsync = promisify(execFile);
 
 const HISTORY_LIMIT = 50;
-const VERSION = "2026-10-31.7";
+const VERSION = "2026-10-31.8";
 const STATIC_TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
@@ -103,6 +104,7 @@ export async function startServer(initialSettings: RelaunchSettings): Promise<vo
   const rootDir = resolve(__dirname, "..");
   const webDir = resolve(rootDir, "web");
   let updating = false;
+  let selling = false;
   let resumeWatching = false;
 
   // ---- state ---------------------------------------------------------------
@@ -175,6 +177,7 @@ export async function startServer(initialSettings: RelaunchSettings): Promise<vo
       watching: watchers.length > 0,
       busy: !!current,
       updating,
+      selling,
       version: VERSION,
       settings,
       current,
@@ -451,6 +454,22 @@ export async function startServer(initialSettings: RelaunchSettings): Promise<vo
       case "POST /api/update": {
         await selfUpdate();
         return stateJson();
+      }
+      case "POST /api/sell-all": {
+        if (!connection) throw new HttpError(400, `RPC not configured: ${rpcError}`);
+        if (!launcher) throw new HttpError(400, `launch wallet not configured: ${launcherError}`);
+        if (current) throw new HttpError(409, "a run is in progress; wait for it to finish");
+        if (selling) throw new HttpError(409, "already selling");
+        selling = true;
+        broadcastState();
+        try {
+          const outcome = await sellAll({ connection, wallet: launcher, settings });
+          balanceCache = null;
+          return { ...(await stateJson()), sell: outcome };
+        } finally {
+          selling = false;
+          broadcastState();
+        }
       }
       default:
         throw new HttpError(404, "not found");

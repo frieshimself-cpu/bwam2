@@ -128,6 +128,9 @@ function initDashboard({ apiBase, token, onUnauthorized }) {
     $("balance").textContent = state.launcher ? fmtSol(state.launcher.balanceSol) : "—";
     $("version").textContent = state.version || "—";
     $("update").disabled = !!state.updating || !!state.busy;
+    const sellBtn = $("sell-all");
+    sellBtn.disabled = !!state.selling || !!state.busy || !state.launcher || !state.rpc.ok;
+    sellBtn.textContent = state.selling ? "Selling…" : "Sell held coins → SOL";
 
     const notice = $("notice");
     const problems = [];
@@ -246,6 +249,19 @@ function initDashboard({ apiBase, token, onUnauthorized }) {
     const mint = $("relaunch-mint").value.trim();
     if (!mint) return;
     api("/api/relaunch", { mint }).then(render).catch(fail);
+  });
+  $("sell-all").addEventListener("click", () => {
+    const testing = state && state.settings.dryRun;
+    if (!window.confirm(testing
+      ? "Simulate selling every coin the launch wallet holds (test mode is on, nothing is sent)?"
+      : "Sell every coin the launch wallet holds back to SOL on its bonding curve? This sends real transactions.")) return;
+    api("/api/sell-all", {})
+      .then((next) => {
+        render(next);
+        const r = next.sell;
+        if (r) appendLog({ ts: Date.now(), level: "info", msg: `sell: ${r.results.map((x) => `${x.mint.slice(0, 6)} ${x.error ? "error: " + x.error : x.skipped ? "skipped: " + x.skipped : (x.solOut ?? 0).toFixed(4) + " SOL"}`).join(" | ") || "nothing held"}; balance ${r.balanceBefore.toFixed(4)} → ${r.balanceAfter.toFixed(4)} SOL` });
+      })
+      .catch(fail);
   });
   $("update").addEventListener("click", () => {
     if (!window.confirm("Pull the latest version from GitHub and restart the backend? Watching resumes by itself afterwards.")) return;

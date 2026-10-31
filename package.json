@@ -16,6 +16,7 @@
     "watch": "tsx src/cli.ts watch",
     "relaunch": "tsx src/cli.ts relaunch",
     "status": "tsx src/cli.ts status",
+    "sell-all": "tsx src/cli.ts sell-all",
     "typecheck": "tsc --noEmit",
     "build": "tsc"
   },

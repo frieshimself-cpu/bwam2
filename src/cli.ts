@@ -7,6 +7,7 @@ import { paramsFromMint, readTokenConfig, resolveLaunchParams } from "./metadata
 import { curveStats, describeParams, pumpUrl, tradeEventsIn } from "./pump.js";
 import { relaunchUntilBought } from "./relaunch.js";
 import { getParsedTxs, makeConnection } from "./rpc.js";
+import { sellAll } from "./sell.js";
 import { startServer } from "./server.js";
 import { loadWallet } from "./wallet.js";
 import { watchWallet } from "./watch.js";
@@ -18,6 +19,7 @@ const USAGE = `pump-relauncher
   npm run relaunch -- <mint>         relaunch an existing coin with its exact parameters
   npm run launch   -- <token.json>   upload metadata (or reuse "uri") and launch from a config file
   npm run status   -- <mint>         show a coin's parameters, curve and recent buys
+  npm run sell-all                   sell every coin the launch wallet holds back to SOL
 
 options (override .env):
   --max <n>            relaunches after the first launch        (RELAUNCH_MAX)
@@ -155,6 +157,12 @@ async function main() {
     }
     case "status": {
       await status(parsePubkey(arg, "mint address"));
+      return;
+    }
+    case "sell-all": {
+      const connection = makeConnection();
+      const wallet = loadWallet();
+      await sellAll({ connection, wallet, settings });
       return;
     }
     default:

@@ -657,18 +657,28 @@ export async function launchCoin({
     return null;
   }
 
-  const signature = settings.jitoUrl
-    ? await sendViaJito(connection, tx, settings.jitoUrl)
-    : await sendViaRpc(connection, tx);
-  log.info(`sent${settings.jitoUrl ? " via jito" : ""} ${txUrl(signature)}`);
+  const signature = await sendAndConfirm(connection, tx, { blockhash, lastValidBlockHeight }, settings.jitoUrl);
   cache.invalidateBalance(wallet.publicKey);
-
-  const confirmation = await connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, "confirmed");
-  if (confirmation.value.err) {
-    for (const line of await failureLines(connection, signature)) log.error("  " + line);
-    throw new Error(`launch transaction failed on-chain: ${JSON.stringify(confirmation.value.err)}`);
-  }
 
   log.info(`live: ${pumpUrl(mint)}`);
   return { mint, bondingCurve: bondingCurvePda(mint), signature };
 }
+
+/** Sends a signed transaction (RPC, or Jito when `jitoUrl` is set) and waits for confirmation. */
+export async function sendAndConfirm(
+  connection: Connection,
+  tx: VersionedTransaction,
+  lifetime: { blockhash: string; lastValidBlockHeight: number },
+  jitoUrl = "",
+): Promise<string> {
+  const signature = jitoUrl ? await sendViaJito(connection, tx, jitoUrl) : await sendViaRpc(connection, tx);
+  log.info(`sent${jitoUrl ? " via jito" : ""} ${txUrl(signature)}`);
+  const confirmation = await connection.confirmTransaction({ signature, ...lifetime }, "confirmed");
+  if (confirmation.value.err) {
+    for (const line of await failureLines(connection, signature)) log.error("  " + line);
+    throw new Error(`transaction failed on-chain: ${JSON.stringify(confirmation.value.err)}`);
+  }
+  return signature;
+}
+
+export { simulateOrThrow };
