@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Pump Relauncher</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <h1>Pump Relauncher</h1>
+    <span id="status" class="pill">connecting…</span>
+  </header>
+
+  <main>
+    <section class="card" id="wallet-card">
+      <h2>Developer wallet to copy</h2>
+      <p class="hint">Paste the wallet you launch from. Every coin it creates on pump.fun is copied exactly — name, ticker, image, links, pairing, creator fee, cashback / holder-reward flags — and relaunched from the launch wallet below until it gets buys.</p>
+      <div class="row">
+        <input id="dev-wallet" placeholder="developer wallet address" spellcheck="false" />
+        <button id="set-dev-wallet">Set</button>
+      </div>
+      <div class="row">
+        <button id="toggle-watch" class="primary">Start watching</button>
+        <button id="stop-run" class="danger" hidden>Stop current run</button>
+      </div>
+      <dl class="kv">
+        <dt>Launch wallet</dt><dd id="launcher">—</dd>
+        <dt>Balance</dt><dd id="balance">—</dd>
+      </dl>
+      <p id="notice" class="notice" hidden></p>
+    </section>
+
+    <section class="card">
+      <h2>Relaunch settings</h2>
+      <form id="settings" class="grid">
+        <label>Relaunches after the first <input name="maxRelaunches" type="number" min="0" step="1" /></label>
+        <label>Window per launch (sec) <input name="intervalSec" type="number" min="10" step="1" /></label>
+        <label>Check every (sec) <input name="pollSec" type="number" min="2" step="1" /></label>
+        <label>Stop after outside buys (0 = never) <input name="stopOnBuys" type="number" min="0" step="1" /></label>
+        <label>Dev buy (SOL) <input name="devBuySol" type="number" min="0" step="0.001" /></label>
+        <label>Priority fee (µlamports/CU) <input name="priorityFeeMicroLamports" type="number" min="0" step="1000" /></label>
+        <label>Jito URL (empty = RPC) <input name="jitoUrl" placeholder="https://mainnet.block-engine.jito.wtf" /></label>
+        <label>Jito tip (SOL) <input name="jitoTipSol" type="number" min="0" step="0.0001" /></label>
+        <label class="check"><input name="dryRun" type="checkbox" /> Dry run (simulate only, send nothing)</label>
+        <div class="row"><button type="submit">Save settings</button><span id="cost" class="hint"></span></div>
+      </form>
+    </section>
+
+    <section class="card">
+      <h2>Relaunch an existing coin</h2>
+      <div class="row">
+        <input id="relaunch-mint" placeholder="mint address of a coin you launched" spellcheck="false" />
+        <button id="relaunch">Relaunch now</button>
+      </div>
+    </section>
+
+    <section class="card" id="current-card">
+      <h2>Current run</h2>
+      <div id="current" class="run"><p class="hint">Nothing running.</p></div>
+    </section>
+
+    <section class="card">
+      <h2>Log</h2>
+      <pre id="log"></pre>
+    </section>
+
+    <section class="card">
+      <h2>History</h2>
+      <div id="history"><p class="hint">No runs yet.</p></div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+  <script src="boot.js"></script>
+</body>
+</html>

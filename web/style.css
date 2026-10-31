@@ -1,0 +1,60 @@
+:root {
+  --bg: #0f1115;
+  --card: #171a21;
+  --border: #262a33;
+  --text: #e6e8ee;
+  --muted: #8b93a7;
+  --accent: #5fd08a;
+  --danger: #ff6b6b;
+  --warn: #f5c451;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font-size: 14px; }
+body.popup { width: 420px; min-height: 560px; }
+header { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid var(--border); }
+h1 { font-size: 17px; margin: 0; }
+h2 { font-size: 13px; margin: 0 0 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+main { padding: 14px 18px 28px; display: grid; gap: 14px; max-width: 980px; margin: 0 auto; }
+body:not(.popup) main { grid-template-columns: 1fr 1fr; }
+body:not(.popup) #wallet-card, body:not(.popup) #current-card { grid-column: 1 / -1; }
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+.row { display: flex; gap: 8px; align-items: center; margin: 8px 0; flex-wrap: wrap; }
+input { flex: 1; min-width: 0; background: #0b0d11; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; font: inherit; }
+input[type="number"] { width: 110px; flex: 0 0 auto; }
+input[type="checkbox"] { width: auto; flex: 0 0 auto; }
+button { background: #262a33; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; font: inherit; cursor: pointer; }
+button:hover { border-color: #3a4050; }
+button.primary { background: var(--accent); color: #0b1a10; border-color: transparent; font-weight: 600; }
+button.danger { background: var(--danger); color: #1a0b0b; border-color: transparent; font-weight: 600; }
+button[disabled] { opacity: .5; cursor: default; }
+.hint { color: var(--muted); font-size: 12.5px; margin: 0 0 8px; line-height: 1.45; }
+.notice { color: var(--warn); font-size: 12.5px; margin: 8px 0 0; }
+.pill { padding: 4px 10px; border-radius: 999px; background: #262a33; font-size: 12px; color: var(--muted); }
+.pill.on { background: #173b26; color: var(--accent); }
+.pill.busy { background: #3b3117; color: var(--warn); }
+.pill.err { background: #3b1717; color: var(--danger); }
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 8px 0 0; font-size: 13px; }
+.kv dt { color: var(--muted); }
+.kv dd { margin: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; }
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 14px; }
+body.popup .grid { grid-template-columns: 1fr; }
+.grid label { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 12.5px; color: var(--muted); }
+.grid label.check { justify-content: flex-start; }
+.grid .row { grid-column: 1 / -1; }
+pre#log { margin: 0; max-height: 320px; overflow: auto; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+pre#log .warn { color: var(--warn); }
+pre#log .error { color: var(--danger); }
+.run .title { font-weight: 600; margin-bottom: 4px; }
+.run .meta { color: var(--muted); font-size: 12.5px; margin-bottom: 8px; }
+.launches { margin: 0; padding: 0; list-style: none; display: grid; gap: 4px; }
+.launches li { display: flex; gap: 10px; align-items: baseline; font-size: 13px; flex-wrap: wrap; }
+.launches .idx { color: var(--muted); width: 28px; }
+.launches a { color: var(--accent); text-decoration: none; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.launches .result { color: var(--muted); font-size: 12px; }
+.history-item { padding: 8px 0; border-top: 1px solid var(--border); font-size: 13px; }
+.history-item:first-child { border-top: 0; }
+.outcome { font-size: 11px; padding: 2px 7px; border-radius: 999px; background: #262a33; color: var(--muted); margin-left: 6px; }
+.outcome.bought { background: #173b26; color: var(--accent); }
+.outcome.error, .outcome.stopped { background: #3b1717; color: var(--danger); }
+.settings-box { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }

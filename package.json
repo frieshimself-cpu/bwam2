@@ -1,0 +1,35 @@
+{
+  "name": "pump-relauncher",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Relaunches your pump.fun coin automatically until it gets buys",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "serve": "tsx src/cli.ts serve",
+    "start": "tsx src/cli.ts serve",
+    "build-extension": "tsx src/build-extension.ts",
+    "launch": "tsx src/cli.ts launch",
+    "watch": "tsx src/cli.ts watch",
+    "relaunch": "tsx src/cli.ts relaunch",
+    "status": "tsx src/cli.ts status",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@pump-fun/pump-sdk": "^4.3.1",
+    "@solana/spl-token": "^0.4.13",
+    "@solana/web3.js": "^1.98.2",
+    "bn.js": "^5.2.2",
+    "bs58": "^6.0.0",
+    "dotenv": "^18.0.0"
+  },
+  "devDependencies": {
+    "@types/bn.js": "^5.1.6",
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}

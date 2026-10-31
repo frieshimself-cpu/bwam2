@@ -1,0 +1,14 @@
+{
+  "name": "My Coin",
+  "symbol": "MYCOIN",
+  "description": "What the coin is about.",
+  "image": "./image.png",
+  "twitter": "https://x.com/yourhandle",
+  "telegram": "https://t.me/yourgroup",
+  "website": "https://example.com",
+  "uri": "",
+  "mayhemMode": false,
+  "creatorFeeBps": 0,
+  "holderReward": false,
+  "quoteMint": ""
+}

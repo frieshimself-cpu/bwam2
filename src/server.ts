@@ -1,0 +1,425 @@
+// Dashboard + API for the website and the extension popup. Holds the launch
+// wallet, keeps the watcher alive, streams the log, and persists the chosen
+// developer wallet, settings and run history under DATA_DIR.
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { extname, resolve } from "node:path";
+import { Connection, Keypair, LAMPORTS_PER_SOL, PublicKey } from "@solana/web3.js";
+import { mergeSettings, serverSettingsFromEnv, type RelaunchSettings } from "./config.js";
+import { log, onLog, recentLogs } from "./log.js";
+import { paramsFromMint } from "./metadata.js";
+import { describeParams, pumpUrl, type LaunchParams } from "./pump.js";
+import { relaunchUntilBought, type Launch, type WindowResult } from "./relaunch.js";
+import { makeConnection } from "./rpc.js";
+import { loadWallet } from "./wallet.js";
+import { watchWallet, type WatchHandle } from "./watch.js";
+
+interface LaunchJson {
+  index: number;
+  mint: string;
+  url: string;
+  signature: string;
+  at: number;
+}
+
+interface WindowJson {
+  index: number;
+  buys: number;
+  buyers: number;
+  solRaised: number;
+}
+
+export interface RunRecord {
+  id: string;
+  startedAt: number;
+  endedAt?: number;
+  /** "watch" when triggered by the developer wallet, "manual" for a relaunch from the UI/CLI. */
+  trigger: "watch" | "manual";
+  devWallet?: string;
+  source: { mint: string; url: string; name: string; symbol: string; summary: string; params: LaunchParams };
+  launches: LaunchJson[];
+  windows: WindowJson[];
+  outcome?: "bought" | "exhausted" | "stopped" | "dry-run" | "error";
+  error?: string;
+}
+
+interface PersistedState {
+  devWallet: string | null;
+  settings: RelaunchSettings;
+  history: RunRecord[];
+}
+
+const HISTORY_LIMIT = 50;
+const STATIC_TYPES: Record<string, string> = {
+  ".html": "text/html; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".png": "image/png",
+  ".svg": "image/svg+xml",
+};
+
+class HttpError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+function launchJson(launch: Launch): LaunchJson {
+  return { index: launch.index, mint: launch.mint.toBase58(), url: pumpUrl(launch.mint), signature: launch.signature, at: launch.at };
+}
+
+async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknown>> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of req) {
+    size += (chunk as Buffer).length;
+    if (size > 64 * 1024) throw new HttpError(413, "body too large");
+    chunks.push(chunk as Buffer);
+  }
+  if (chunks.length === 0) return {};
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>;
+  } catch {
+    throw new HttpError(400, "invalid JSON body");
+  }
+}
+
+export async function startServer(initialSettings: RelaunchSettings): Promise<void> {
+  const srv = serverSettingsFromEnv();
+  const dataFile = resolve(srv.dataDir, "state.json");
+  const webDir = resolve(__dirname, "..", "web");
+
+  // ---- state ---------------------------------------------------------------
+  let settings = initialSettings;
+  let devWallet: PublicKey | null = null;
+  let history: RunRecord[] = [];
+  let current: RunRecord | null = null;
+  let watcher: WatchHandle | null = null;
+  let watchStopped = false; // set before stopping the watcher so its run is recorded as "stopped"
+  let manual: AbortController | null = null;
+  let balanceCache: { at: number; sol: number } | null = null;
+  const sseClients = new Set<ServerResponse>();
+
+  let connection: Connection | null = null;
+  let rpcError = "";
+  try {
+    connection = makeConnection();
+  } catch (err) {
+    rpcError = (err as Error).message;
+  }
+
+  let launcher: Keypair | null = null;
+  let launcherError = "";
+  try {
+    launcher = loadWallet();
+  } catch (err) {
+    launcherError = (err as Error).message;
+  }
+
+  try {
+    const saved = JSON.parse(await readFile(dataFile, "utf8")) as Partial<PersistedState>;
+    if (saved.devWallet) devWallet = new PublicKey(saved.devWallet);
+    if (saved.settings) settings = mergeSettings(settings, saved.settings);
+    if (Array.isArray(saved.history)) history = saved.history.slice(-HISTORY_LIMIT);
+  } catch {
+    // first run
+  }
+
+  async function persist() {
+    await mkdir(srv.dataDir, { recursive: true });
+    const state: PersistedState = { devWallet: devWallet?.toBase58() ?? null, settings, history };
+    await writeFile(dataFile, JSON.stringify(state, null, 2));
+  }
+
+  async function launcherBalance(): Promise<number | null> {
+    if (!connection || !launcher) return null;
+    if (balanceCache && Date.now() - balanceCache.at < 10_000) return balanceCache.sol;
+    try {
+      const sol = (await connection.getBalance(launcher.publicKey, "confirmed")) / LAMPORTS_PER_SOL;
+      balanceCache = { at: Date.now(), sol };
+      return sol;
+    } catch {
+      return balanceCache?.sol ?? null;
+    }
+  }
+
+  async function stateJson() {
+    return {
+      rpc: { ok: !!connection, error: rpcError },
+      launcher: launcher ? { address: launcher.publicKey.toBase58(), balanceSol: await launcherBalance() } : null,
+      launcherError,
+      devWallet: devWallet?.toBase58() ?? null,
+      watching: !!watcher,
+      busy: !!current,
+      settings,
+      current,
+      history: [...history].reverse(),
+      logs: recentLogs(200),
+    };
+  }
+
+  function broadcast(event: string, data: unknown) {
+    const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+    for (const client of sseClients) client.write(payload);
+  }
+  const broadcastState = () => void stateJson().then((s) => broadcast("state", s));
+  onLog((entry) => broadcast("log", entry));
+
+  // ---- runs ----------------------------------------------------------------
+  function beginRun(trigger: RunRecord["trigger"], params: LaunchParams, sourceMint: PublicKey | null, dev?: PublicKey): RunRecord {
+    current = {
+      id: `${Date.now().toString(36)}`,
+      startedAt: Date.now(),
+      trigger,
+      devWallet: dev?.toBase58(),
+      source: {
+        mint: sourceMint?.toBase58() ?? "",
+        url: sourceMint ? pumpUrl(sourceMint) : "",
+        name: params.name,
+        symbol: params.symbol,
+        summary: describeParams(params),
+        params,
+      },
+      launches: [],
+      windows: [],
+    };
+    broadcastState();
+    return current;
+  }
+
+  const onLaunch = (launch: Launch) => {
+    current?.launches.push(launchJson(launch));
+    broadcastState();
+  };
+  const onWindow = (launch: Launch, result: WindowResult) => {
+    current?.windows.push({ index: launch.index, buys: result.buys, buyers: result.buyers.size, solRaised: result.solRaised });
+    broadcastState();
+  };
+
+  async function endRun(outcome: RunRecord["outcome"], error?: string) {
+    if (!current) return;
+    current.endedAt = Date.now();
+    current.outcome = outcome;
+    if (error) current.error = error;
+    history.push(current);
+    if (history.length > HISTORY_LIMIT) history = history.slice(-HISTORY_LIMIT);
+    current = null;
+    balanceCache = null;
+    await persist();
+    broadcastState();
+  }
+
+  function outcomeOf(record: RunRecord, aborted: boolean): RunRecord["outcome"] {
+    if (settings.dryRun) return "dry-run";
+    const last = record.windows[record.windows.length - 1];
+    if (last && settings.stopOnBuys > 0 && last.buys >= settings.stopOnBuys) return "bought";
+    return aborted ? "stopped" : "exhausted";
+  }
+
+  function startWatching() {
+    if (!connection) throw new HttpError(400, `RPC not configured: ${rpcError}`);
+    if (!launcher) throw new HttpError(400, `launch wallet not configured: ${launcherError}`);
+    if (!devWallet) throw new HttpError(400, "set the developer wallet to copy first");
+    const dev = devWallet;
+    watchStopped = false;
+    watcher = watchWallet({
+      connection,
+      wallet: launcher,
+      devWallet: dev,
+      settings: () => settings,
+      canStart: () => !current,
+      onDetect: (call, signature) => {
+        const run = beginRun("watch", call, call.mint, dev);
+        // the original launch is launch #0 of the run
+        run.launches.push({ index: 0, mint: call.mint.toBase58(), url: pumpUrl(call.mint), signature, at: Date.now() });
+      },
+      onLaunch,
+      onWindow,
+      onLoopEnd: () => void endRun(current ? outcomeOf(current, watchStopped) : undefined),
+    });
+    broadcastState();
+  }
+
+  async function stopWatching() {
+    const w = watcher;
+    watcher = null;
+    if (w) {
+      watchStopped = true;
+      await w.stop(); // runs onLoopEnd for an in-progress run
+    }
+    broadcastState();
+  }
+
+  async function relaunchManual(mint: PublicKey) {
+    if (!connection) throw new HttpError(400, `RPC not configured: ${rpcError}`);
+    if (!launcher) throw new HttpError(400, `launch wallet not configured: ${launcherError}`);
+    if (current) throw new HttpError(409, "a run is already in progress");
+    const params = await paramsFromMint(connection, mint);
+    const record = beginRun("manual", params, mint);
+    manual = new AbortController();
+    const signal = manual.signal;
+    void relaunchUntilBought({ connection, wallet: launcher, params, settings: () => settings, signal, onLaunch, onWindow })
+      .then(() => endRun(outcomeOf(record, signal.aborted)))
+      .catch((err: Error) => {
+        log.error(`relaunch failed: ${err.message}`);
+        return endRun("error", err.message);
+      })
+      .finally(() => {
+        manual = null;
+      });
+  }
+
+  async function stopRun() {
+    if (manual) {
+      manual.abort();
+      return;
+    }
+    if (watcher && current) {
+      // the watcher's loop shares its abort signal: restart the watcher to end the loop only
+      await stopWatching();
+      startWatching();
+    }
+  }
+
+  // ---- http ----------------------------------------------------------------
+  function authorized(req: IncomingMessage, url: URL): boolean {
+    if (!srv.apiToken) return true;
+    return req.headers.authorization === `Bearer ${srv.apiToken}` || url.searchParams.get("token") === srv.apiToken;
+  }
+
+  async function serveStatic(pathname: string, res: ServerResponse) {
+    const file = pathname === "/" ? "index.html" : pathname.slice(1);
+    if (file.includes("..") || file.includes("/")) throw new HttpError(404, "not found");
+    const type = STATIC_TYPES[extname(file)];
+    if (!type) throw new HttpError(404, "not found");
+    let body: Buffer;
+    try {
+      body = await readFile(resolve(webDir, file));
+    } catch {
+      throw new HttpError(404, "not found");
+    }
+    res.writeHead(200, { "content-type": type, "cache-control": "no-cache" });
+    res.end(body);
+  }
+
+  async function handleApi(req: IncomingMessage, url: URL, res: ServerResponse): Promise<unknown> {
+    const route = `${req.method} ${url.pathname}`;
+    switch (route) {
+      case "GET /api/state":
+        return stateJson();
+      case "GET /api/events": {
+        res.writeHead(200, {
+          "content-type": "text/event-stream",
+          "cache-control": "no-cache",
+          connection: "keep-alive",
+          "access-control-allow-origin": "*",
+        });
+        res.write(`event: state\ndata: ${JSON.stringify(await stateJson())}\n\n`);
+        sseClients.add(res);
+        const heartbeat = setInterval(() => res.write(": ping\n\n"), 20_000);
+        req.on("close", () => {
+          clearInterval(heartbeat);
+          sseClients.delete(res);
+        });
+        return undefined; // stream stays open
+      }
+      case "POST /api/dev-wallet": {
+        const body = await readJsonBody(req);
+        const raw = typeof body.address === "string" ? body.address.trim() : "";
+        let next: PublicKey | null = null;
+        if (raw) {
+          try {
+            next = new PublicKey(raw);
+          } catch {
+            throw new HttpError(400, "not a valid Solana address");
+          }
+        }
+        devWallet = next;
+        await persist();
+        log.info(next ? `developer wallet to copy set to ${next.toBase58()}` : "developer wallet cleared");
+        if (watcher) {
+          await stopWatching();
+          if (next) startWatching();
+        }
+        return stateJson();
+      }
+      case "POST /api/settings": {
+        const body = await readJsonBody(req);
+        try {
+          settings = mergeSettings(settings, body);
+        } catch (err) {
+          throw new HttpError(400, (err as Error).message);
+        }
+        await persist();
+        log.info("settings saved");
+        return stateJson();
+      }
+      case "POST /api/watch": {
+        const body = await readJsonBody(req);
+        if (body.on === false) await stopWatching();
+        else if (!watcher) startWatching();
+        return stateJson();
+      }
+      case "POST /api/relaunch": {
+        const body = await readJsonBody(req);
+        let mint: PublicKey;
+        try {
+          mint = new PublicKey(String(body.mint ?? "").trim());
+        } catch {
+          throw new HttpError(400, "not a valid mint address");
+        }
+        await relaunchManual(mint);
+        return stateJson();
+      }
+      case "POST /api/stop": {
+        await stopRun();
+        return stateJson();
+      }
+      default:
+        throw new HttpError(404, "not found");
+    }
+  }
+
+  const server = createServer(async (req, res) => {
+    const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+    res.setHeader("access-control-allow-origin", "*");
+    res.setHeader("access-control-allow-headers", "content-type, authorization");
+    res.setHeader("access-control-allow-methods", "GET, POST, OPTIONS");
+    if (req.method === "OPTIONS") {
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+    try {
+      if (url.pathname.startsWith("/api/")) {
+        if (!authorized(req, url)) throw new HttpError(401, "unauthorized");
+        const result = await handleApi(req, url, res);
+        if (result === undefined) return;
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify(result));
+        return;
+      }
+      await serveStatic(url.pathname, res);
+    } catch (err) {
+      const status = err instanceof HttpError ? err.status : 500;
+      if (status === 500) log.error(`${req.method} ${url.pathname}: ${(err as Error).message}`);
+      if (!res.headersSent) res.writeHead(status, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: (err as Error).message }));
+    }
+  });
+
+  await new Promise<void>((resolveListen) => server.listen(srv.port, srv.host, resolveListen));
+  log.info(`dashboard on http://${srv.host}:${srv.port}${srv.apiToken ? " (API token required)" : ""}`);
+  if (rpcError) log.warn(`RPC not configured: ${rpcError}`);
+  if (launcherError) log.warn(`launch wallet not configured: ${launcherError}`);
+  if (devWallet) log.info(`developer wallet to copy: ${devWallet.toBase58()} (press Start in the dashboard)`);
+
+  const shutdown = () => {
+    void stopWatching().finally(() => process.exit(0));
+  };
+  process.once("SIGINT", shutdown);
+  process.once("SIGTERM", shutdown);
+}
