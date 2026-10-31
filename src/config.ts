@@ -23,7 +23,8 @@ export interface RelaunchSettings {
   jitoTipSol: number;
 }
 
-export const DEFAULT_JITO_URL = "https://mainnet.block-engine.jito.wtf";
+// Same block engine Velo uses; Frankfurt is a few ms from a German VPS.
+export const DEFAULT_JITO_URL = "https://frankfurt.mainnet.block-engine.jito.wtf";
 
 function num(name: string, fallback: number): number {
   const raw = process.env[name];

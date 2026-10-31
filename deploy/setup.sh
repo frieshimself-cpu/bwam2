@@ -3,13 +3,15 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/frieshimself-cpu/bwam2/claude/laughing-faraday-t7oy24/deploy/setup.sh | bash
 #
-# Installs Node 22, clones the repo to /opt/pump-relauncher, asks for the two
-# secrets (Helius RPC URL, launch wallet key) and writes them to .env, runs the
-# backend as a systemd service that survives reboots, and — if you give a
-# domain — puts Caddy in front for HTTPS. Idempotent: re-running updates the
-# code and restarts; existing .env is kept.
+# Installs Node 22, clones the repo to /opt/pump-relauncher, asks for the Helius
+# RPC URL, generates the launch wallet on the server (prints only its address —
+# you fund it, nobody handles a private key), runs the backend as a systemd
+# service that survives reboots, and — if you give a domain — puts Caddy in
+# front for HTTPS. Idempotent: re-running updates the code and restarts;
+# existing .env and wallet are kept.
 #
-# Non-interactive use: HELIUS_RPC_URL=... WALLET_PRIVATE_KEY=... DOMAIN=... bash setup.sh
+# Non-interactive use: HELIUS_RPC_URL=... DOMAIN=... bash setup.sh
+# (WALLET_PRIVATE_KEY=... too, to use a wallet you already have)
 set -euo pipefail
 
 REPO="${REPO:-https://github.com/frieshimself-cpu/bwam2.git}"
@@ -63,16 +65,15 @@ ask() {
 
 if [ ! -f .env ]; then
   echo
-  echo "Two secrets go into $APP/.env now and nowhere else."
+  echo "The Helius URL goes into $APP/.env now and nowhere else."
   ask "Helius RPC URL (https://mainnet.helius-rpc.com/?api-key=...): " HELIUS_RPC_URL
-  ask "Launch wallet private key (base58; typing is hidden): " WALLET_PRIVATE_KEY hidden
   [ -n "$DOMAIN" ] || ask "Domain pointed at this server for HTTPS (leave blank to use an SSH tunnel): " DOMAIN
   API_TOKEN=$(openssl rand -hex 24)
   (
     umask 077
     cat > .env <<EOF
 HELIUS_RPC_URL=$HELIUS_RPC_URL
-WALLET_PRIVATE_KEY=$WALLET_PRIVATE_KEY
+WALLET_PRIVATE_KEY=${WALLET_PRIVATE_KEY:-}
 HOST=127.0.0.1
 PORT=$PORT
 API_TOKEN=$API_TOKEN
@@ -80,6 +81,8 @@ DATA_DIR=$APP/data
 EOF
   )
 fi
+# The launch wallet: generated here if .env has none; its secret never leaves this file.
+LAUNCH_ADDR=$(node dist/keygen.js | sed -n 's/^launch wallet: \([A-Za-z0-9]*\).*/\1/p')
 API_TOKEN=$(grep -E '^API_TOKEN=' .env | cut -d= -f2-)
 chown -R "$RUN_USER:$RUN_USER" "$APP"
 chmod 600 .env
@@ -121,6 +124,7 @@ else
   echo "            then open           http://127.0.0.1:$PORT"
 fi
 echo "API token:  $API_TOKEN   (the dashboard asks for it once; the extension popup has a field for it)"
+echo "Launch wallet: $LAUNCH_ADDR   <- send ~0.1 SOL here; every launch costs about 0.03 SOL"
 echo "Logs:       journalctl -u $SVC -f"
 echo "Update:     re-run this script"
 echo "Secrets:    $APP/.env"

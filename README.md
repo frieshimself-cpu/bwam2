@@ -17,6 +17,66 @@ Built on the official `@pump-fun/pump-sdk`, against your Helius RPC. Nothing
 goes through third-party transaction APIs; the launch key never leaves the
 backend.
 
+## Windows, from zero (copy–paste, in order)
+
+Press the Windows key, type `powershell`, press Enter (a normal window, not "as administrator"). Paste each block, press Enter, wait.
+
+**1. Git, Node LTS, Claude Code** (Windows asks "allow this app to make changes?" — Yes):
+
+```powershell
+winget install -e --id Git.Git --accept-source-agreements --accept-package-agreements
+winget install -e --id OpenJS.NodeJS.LTS --accept-source-agreements --accept-package-agreements
+winget install -e --id Anthropic.ClaudeCode --accept-source-agreements --accept-package-agreements
+```
+
+Then **close that PowerShell window and open a new one** — the new programs are only on the path of a fresh window.
+
+**2. Get the project, install, make the launch wallet:**
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned -Force
+irm https://raw.githubusercontent.com/frieshimself-cpu/bwam2/claude/laughing-faraday-t7oy24/scripts/bootstrap.ps1 | iex
+```
+
+**3. Open Claude Code in the project** (first time: pick a theme, log in with your Claude account in the browser, answer "Yes, I trust this folder"):
+
+```powershell
+cd $HOME\pump-relauncher; claude
+```
+
+**4. Inside Claude Code, paste:**
+
+```
+Read FIRST_PROMPT.md and follow it exactly.
+```
+
+It sets your Helius RPC, has you fund the launch wallet (you only ever see its address), starts the dashboard, loads the extension, does a dry run, then the first real relaunch and the first watched launch — one step at a time. Press Shift+Tab once so the prompt says "accept edits"; when it asks permission to run a command, choose "don't ask again" for npm, node and git.
+
+**Prefer the Claude desktop app?** Skip the `Anthropic.ClaudeCode` line in step 1, then instead of step 3 open the Claude app → **Code** tab → **Local** → **Select folder** → `pump-relauncher` in your home folder → permission mode **Accept edits** → paste the step-4 message.
+
+## Mac, from zero
+
+```bash
+[ -x /opt/homebrew/bin/brew ] || [ -x /usr/local/bin/brew ] || /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+```
+
+```bash
+eval "$(/opt/homebrew/bin/brew shellenv 2>/dev/null || /usr/local/bin/brew shellenv)"
+brew install node@22 && brew link --overwrite --force node@22
+curl -fsSL https://claude.ai/install.sh | bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/frieshimself-cpu/bwam2/claude/laughing-faraday-t7oy24/scripts/bootstrap.sh | bash
+```
+
+```bash
+cd ~/pump-relauncher && claude
+```
+
+Then paste `Read FIRST_PROMPT.md and follow it exactly.`
+
 ## One-command install on a server
 
 On a fresh Ubuntu/Debian VPS, as root:
@@ -25,11 +85,11 @@ On a fresh Ubuntu/Debian VPS, as root:
 curl -fsSL https://raw.githubusercontent.com/frieshimself-cpu/bwam2/claude/laughing-faraday-t7oy24/deploy/setup.sh | bash
 ```
 
-It installs Node, the code and a systemd service, asks for your Helius RPC URL
-and the launch wallet's private key (typed hidden, written only to
-`/opt/pump-relauncher/.env`), optionally sets up HTTPS with Caddy if you give it
-a domain, and prints the dashboard address and an API token. Re-run it to
-update. Logs: `journalctl -u pump-relauncher -f`.
+It installs Node, the code and a systemd service, asks for your Helius RPC URL,
+generates the launch wallet on the server (prints only the address for you to
+fund; the secret stays in `/opt/pump-relauncher/.env`), optionally sets up
+HTTPS with Caddy if you give it a domain, and prints the dashboard address and
+an API token. Re-run it to update. Logs: `journalctl -u pump-relauncher -f`.
 
 ## Manual setup
 
@@ -41,7 +101,7 @@ cp .env.example .env
 Fill in `.env`:
 
 - `HELIUS_RPC_URL` – your Helius mainnet RPC URL (the websocket URL is derived from it).
-- `WALLET_PRIVATE_KEY` – the **launch wallet**, the one that sends the relaunches. Use a burner holding only what you intend to spend. The developer wallets you copy never need their keys.
+- `WALLET_PRIVATE_KEY` – the **launch wallet**, the one that sends the relaunches. `npm run keygen` generates one, writes it here and prints only the address to fund. The developer wallets you copy never need their keys.
 
 Then start the backend:
 

@@ -11,6 +11,7 @@
     "serve": "tsx src/cli.ts serve",
     "start": "tsx src/cli.ts serve",
     "build-extension": "tsx src/build-extension.ts",
+    "keygen": "tsx src/keygen.ts",
     "launch": "tsx src/cli.ts launch",
     "watch": "tsx src/cli.ts watch",
     "relaunch": "tsx src/cli.ts relaunch",
