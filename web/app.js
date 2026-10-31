@@ -103,6 +103,8 @@ function initDashboard({ apiBase, token, onUnauthorized }) {
 
   function render(next) {
     state = next;
+    // a backend from before the wallet list reports a single `devWallet`
+    if (!Array.isArray(state.devWallets)) state.devWallets = state.devWallet ? [state.devWallet] : [];
     const status = $("status");
     const testing = state.settings.dryRun;
     if (state.updating) {
@@ -200,7 +202,14 @@ function initDashboard({ apiBase, token, onUnauthorized }) {
   async function saveAndStart() {
     const wallets = readWallets();
     if (wallets.length === 0) throw new Error("paste at least one wallet address to copy");
-    await api("/api/dev-wallets", { addresses: wallets });
+    try {
+      await api("/api/dev-wallets", { addresses: wallets });
+    } catch (err) {
+      if (!/404|not found/i.test(err.message)) throw err;
+      // older backend: one wallet only
+      if (wallets.length > 1) appendLog({ ts: Date.now(), level: "warn", msg: "this backend version watches one wallet; using the first. Update the server to watch several." });
+      await api("/api/dev-wallet", { address: wallets[0] });
+    }
     await api("/api/settings", readSettings());
     const next = await api("/api/watch", { on: true });
     dirty = false;
