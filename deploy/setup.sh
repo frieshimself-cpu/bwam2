@@ -75,6 +75,7 @@ if [ ! -f .env ]; then
   echo
   echo "The Helius URL goes into $APP/.env now and nowhere else."
   ask "Helius RPC URL (https://mainnet.helius-rpc.com/?api-key=...): " HELIUS_RPC_URL
+  case "$HELIUS_RPC_URL" in http*) ;; *) HELIUS_RPC_URL="https://mainnet.helius-rpc.com/?api-key=$HELIUS_RPC_URL" ;; esac
   [ -n "$DOMAIN" ] || ask "Domain for HTTPS: type 'auto' for <ip>.sslip.io, your own domain, or blank for an SSH tunnel: " DOMAIN
   API_TOKEN="${API_TOKEN:-$(openssl rand -hex 24)}"
   (

@@ -97,7 +97,9 @@ export function requireEnv(name: string): string {
 }
 
 export function rpcUrls(): { http: string; ws: string } {
-  const http = requireEnv("HELIUS_RPC_URL");
+  let http = requireEnv("HELIUS_RPC_URL");
+  // A bare Helius API key is accepted and expanded to the standard mainnet URL.
+  if (!/^https?:\/\//i.test(http)) http = `https://mainnet.helius-rpc.com/?api-key=${http}`;
   const ws = process.env.HELIUS_WS_URL?.trim() || http.replace(/^http/, "ws");
   return { http, ws };
 }
