@@ -11,6 +11,8 @@ export interface RelaunchSettings {
   pollSec: number;
   /** External buys that count as "it worked" (0 = never stop early). */
   stopOnBuys: number;
+  /** Copy a detected launch immediately instead of first watching the original for buys. */
+  instantCopy: boolean;
   /** SOL bought in the same transaction as the create (0 = create only). */
   devBuySol: number;
   /** Priority fee, micro-lamports per compute unit. */
@@ -48,6 +50,7 @@ export function settingsFromEnv(): RelaunchSettings {
     intervalSec: num("RELAUNCH_INTERVAL_SEC", 120),
     pollSec: num("RELAUNCH_POLL_SEC", 10),
     stopOnBuys: num("RELAUNCH_STOP_ON_BUYS", 1),
+    instantCopy: bool("INSTANT_COPY", true),
     devBuySol: num("DEV_BUY_SOL", 0),
     priorityFeeMicroLamports: num("PRIORITY_FEE_MICROLAMPORTS", 100_000),
     dryRun: bool("DRY_RUN", false),
@@ -82,6 +85,7 @@ export function mergeSettings(base: RelaunchSettings, patch: unknown): RelaunchS
     intervalSec: numeric("intervalSec", base.intervalSec),
     pollSec: Math.max(2, numeric("pollSec", base.pollSec)),
     stopOnBuys: Math.floor(numeric("stopOnBuys", base.stopOnBuys)),
+    instantCopy: boolean("instantCopy", base.instantCopy),
     devBuySol: numeric("devBuySol", base.devBuySol),
     priorityFeeMicroLamports: Math.floor(numeric("priorityFeeMicroLamports", base.priorityFeeMicroLamports)),
     dryRun: boolean("dryRun", base.dryRun),

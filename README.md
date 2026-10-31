@@ -168,6 +168,7 @@ Buys are counted from the bonding curve's `TradeEvent`s, excluding the launch wa
 | `RELAUNCH_INTERVAL_SEC` | `--interval` | 120 | seconds each launch gets to attract buys |
 | `RELAUNCH_POLL_SEC` | `--poll` | 10 | seconds between curve checks |
 | `RELAUNCH_STOP_ON_BUYS` | `--stop-on-buys` | 1 | outside buys that end the loop (0 = never stop early) |
+| `INSTANT_COPY` | — | true | in watch mode, fire the first copy the moment a launch is detected instead of watching the original first |
 | `DEV_BUY_SOL` | `--dev-buy` | 0 | SOL to buy in the same transaction as the create |
 | `PRIORITY_FEE_MICROLAMPORTS` | `--priority-fee` | 100000 | priority fee per compute unit |
 | `JITO_URL` | `--jito` | off | send through a Jito block engine (with a tip) instead of the RPC |

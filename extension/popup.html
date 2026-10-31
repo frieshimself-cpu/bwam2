@@ -46,6 +46,7 @@
         <label>Priority fee (µlamports/CU) <input name="priorityFeeMicroLamports" type="number" min="0" step="1000" /></label>
         <label>Jito URL (empty = RPC) <input name="jitoUrl" placeholder="https://mainnet.block-engine.jito.wtf" /></label>
         <label>Jito tip (SOL) <input name="jitoTipSol" type="number" min="0" step="0.0001" /></label>
+        <label class="check"><input name="instantCopy" type="checkbox" /> Copy instantly on detection</label>
         <label class="check"><input name="dryRun" type="checkbox" /> Dry run (simulate only)</label>
         <div class="row"><button type="submit">Save settings</button><span id="cost" class="hint"></span></div>
       </form>

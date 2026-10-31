@@ -122,12 +122,20 @@ export async function relaunchUntilBought(ctx: RelaunchContext, first?: Launch):
   let current: Launch | null = first ?? null;
   if (current) {
     launches.push(current);
+    if (initial.instantCopy && initial.maxRelaunches > 0) {
+      // Fire the first copy the moment the launch is seen; the window logic
+      // below then applies to the copy, not to the original.
+      log.info("instant copy: launching now");
+      const next = await launchNext();
+      if (!next) return launches; // dry run
+      current = next;
+    }
   } else {
     current = await launchNext();
     if (!current) return launches; // dry run
   }
 
-  for (let relaunch = 0; ; relaunch++) {
+  for (let relaunch = first && initial.instantCopy ? 1 : 0; ; relaunch++) {
     const result = await watchWindow(ctx, current);
     ctx.onWindow?.(current, result);
     const settings = ctx.settings();
