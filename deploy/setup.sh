@@ -44,6 +44,8 @@ fi
 id -u "$RUN_USER" >/dev/null 2>&1 || useradd --system --home "$APP" --shell /usr/sbin/nologin "$RUN_USER"
 
 echo ">> code"
+# The checkout is owned by the service user; git (as root) refuses it without this.
+git config --global --add safe.directory "$APP" 2>/dev/null || true
 if [ -d "$APP/.git" ]; then
   git -C "$APP" fetch -q origin "$BRANCH"
   git -C "$APP" checkout -q "$BRANCH"
