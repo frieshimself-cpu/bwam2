@@ -52,7 +52,7 @@ export function settingsFromEnv(): RelaunchSettings {
     stopOnBuys: num("RELAUNCH_STOP_ON_BUYS", 1),
     instantCopy: bool("INSTANT_COPY", true),
     devBuySol: num("DEV_BUY_SOL", 0),
-    priorityFeeMicroLamports: num("PRIORITY_FEE_MICROLAMPORTS", 100_000),
+    priorityFeeMicroLamports: num("PRIORITY_FEE_MICROLAMPORTS", 500_000),
     dryRun: bool("DRY_RUN", false),
     jitoUrl: process.env.JITO_URL?.trim() ?? "",
     jitoTipSol: num("JITO_TIP_SOL", 0.001),

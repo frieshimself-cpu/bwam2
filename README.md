@@ -174,7 +174,7 @@ Buys are counted from the bonding curve's `TradeEvent`s, excluding the launch wa
 | `RELAUNCH_STOP_ON_BUYS` | `--stop-on-buys` | 1 | outside buys that end the loop (0 = never stop early) |
 | `INSTANT_COPY` | — | true | in watch mode, fire the first copy the moment a launch is detected instead of watching the original first |
 | `DEV_BUY_SOL` | `--dev-buy` | 0 | SOL to buy in the same transaction as the create |
-| `PRIORITY_FEE_MICROLAMPORTS` | `--priority-fee` | 100000 | priority fee per compute unit |
+| `PRIORITY_FEE_MICROLAMPORTS` | `--priority-fee` | 500000 | priority fee per compute unit |
 | `JITO_URL` | `--jito` | off | send through a Jito block engine (with a tip) instead of the RPC |
 | `JITO_TIP_SOL` | `--jito-tip` | 0.001 | Jito tip per launch |
 | `DRY_RUN` | `--dry-run` | false | build and simulate the create, send nothing |

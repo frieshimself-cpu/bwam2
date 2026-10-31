@@ -1,5 +1,6 @@
 import { Connection, Keypair, PublicKey } from "@solana/web3.js";
 import { PUMP_PROGRAM_ID } from "@pump-fun/pump-sdk";
+import { chainCache } from "./cache.js";
 import type { RelaunchSettings } from "./config.js";
 import { log, short } from "./log.js";
 import { createCallFromLogs, createCallIn, describeParams, pumpUrl, type CreateCall } from "./pump.js";
@@ -43,6 +44,9 @@ export function watchWallet(options: WatchOptions): WatchHandle {
   let running: Promise<unknown> | null = null;
 
   const programId = PUMP_PROGRAM_ID.toBase58();
+  // keep blockhash, program state and the launch wallet's balance warm so a
+  // detected launch is copied without waiting on the RPC
+  chainCache(connection).startRefreshing(wallet.publicKey);
 
   const subscription = connection.onLogs(
     devWallet,
@@ -108,6 +112,7 @@ export function watchWallet(options: WatchOptions): WatchHandle {
     devWallet,
     async stop() {
       abort.abort();
+      chainCache(connection).stopRefreshing();
       await connection.removeOnLogsListener(subscription).catch(() => undefined);
       await running?.catch(() => undefined);
       log.info(`stopped watching ${short(devWallet)}`);

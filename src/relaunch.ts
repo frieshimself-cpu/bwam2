@@ -108,7 +108,8 @@ export async function relaunchUntilBought(ctx: RelaunchContext, first?: Launch):
     const result = await launchCoin({
       connection: ctx.connection,
       wallet: ctx.wallet,
-      params,
+      // after the first copy, look the original's fee split up again: it may have been set up since
+      params: launches.length > 1 && params.sourceMint ? { ...params, feeSharing: undefined } : params,
       settings: ctx.settings(),
       onMint: ctx.onMint,
     });

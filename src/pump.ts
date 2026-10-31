@@ -26,6 +26,7 @@ import {
 } from "@pump-fun/pump-sdk";
 import BN from "bn.js";
 import bs58 from "bs58";
+import { chainCache } from "./cache.js";
 import type { RelaunchSettings } from "./config.js";
 import { describeFeeSharing, feeSharingInstructions, fetchFeeSharing, type FeeSharing } from "./fees.js";
 import { getParsedTxs } from "./rpc.js";
@@ -229,6 +230,9 @@ export function createCallFromLogs(logs: string[]): CreateCall | null {
         quoteMint: isSolQuote(ev.quoteMint) ? null : ev.quoteMint.toBase58(),
         creator: PublicKey.isOnCurve(ev.creator.toBytes()) ? ev.creator.toBase58() : null,
         sourceMint: ev.mint.toBase58(),
+        // pump.fun's site sets a fee split up in the create transaction itself:
+        // when that instruction is absent there is nothing to look up (yet)
+        feeSharing: logs.some((l) => l.includes("Instruction: CreateFeeSharingConfig")) ? undefined : null,
       };
     } catch (err) {
       log.warn(`could not decode CreateEvent from logs: ${(err as Error).message}`);
@@ -315,7 +319,7 @@ export async function curveStats(connection: Connection, mint: PublicKey): Promi
 }
 
 async function assertBalance(connection: Connection, wallet: PublicKey, settings: RelaunchSettings) {
-  const balance = (await connection.getBalance(wallet, "confirmed")) / LAMPORTS_PER_SOL;
+  const balance = await chainCache(connection).getBalanceSol(wallet);
   const tip = settings.jitoUrl ? settings.jitoTipSol : 0;
   const needed = ESTIMATED_CREATE_COST_SOL + settings.devBuySol * 1.05 + tip;
   log.info(`wallet ${short(wallet)} balance ${balance.toFixed(4)} SOL (need ≈${needed.toFixed(4)} per launch)`);
@@ -348,7 +352,8 @@ export async function prepareLaunch({
   settings: LaunchSettings;
 }): Promise<PreparedLaunch> {
   const online = new OnlinePumpSdk(connection);
-  const global = await online.fetchGlobal();
+  const cache = chainCache(connection);
+  const global = await cache.getGlobal();
   if (!global.createV2Enabled) throw new Error("pump.fun has create_v2 disabled right now; try again later");
 
   // Flags the program has since switched off are dropped rather than failing the launch.
@@ -403,7 +408,7 @@ export async function prepareLaunch({
     instructions.push(await PUMP_SDK.createV2Instruction({ ...common, ...quote }));
     if (quote) computeUnitLimit = 400_000;
   } else {
-    const feeConfig = await online.fetchFeeConfig();
+    const feeConfig = await cache.getFeeConfig();
     const amount = getBuyTokenAmountFromSolAmount({
       global,
       feeConfig,
@@ -557,13 +562,10 @@ async function simulateOrThrow(connection: Connection, tx: VersionedTransaction,
   return sim.value.unitsConsumed;
 }
 
+/** No preflight: the transaction shape is validated ahead of time, and the RPC's simulation would cost a round trip. */
 async function sendViaRpc(connection: Connection, tx: VersionedTransaction): Promise<string> {
   try {
-    return await connection.sendRawTransaction(tx.serialize(), {
-      skipPreflight: false,
-      maxRetries: 5,
-      preflightCommitment: "confirmed",
-    });
+    return await connection.sendRawTransaction(tx.serialize(), { skipPreflight: true, maxRetries: 5 });
   } catch (err) {
     if (err instanceof SendTransactionError) {
       const logs = await err.getLogs(connection).catch(() => [] as string[]);
@@ -571,6 +573,14 @@ async function sendViaRpc(connection: Connection, tx: VersionedTransaction): Pro
     }
     throw err;
   }
+}
+
+/** The program's own error lines for a transaction that failed on-chain. */
+async function failureLines(connection: Connection, signature: string): Promise<string[]> {
+  const tx = await connection
+    .getParsedTransaction(signature, { maxSupportedTransactionVersion: 1, commitment: "confirmed" })
+    .catch(() => null);
+  return (tx?.meta?.logMessages ?? []).filter((l) => /failed|error/i.test(l)).slice(-5);
 }
 
 /** Jito runs no preflight, so only a clean simulation goes out. */
@@ -612,21 +622,19 @@ export async function launchCoin({
 }): Promise<LaunchResult | null> {
   await assertBalance(connection, wallet.publicKey, settings);
 
-  // The original's fee split is set up after its create, so look again at every launch.
-  if (params.sourceMint) {
+  // The original's fee split may be set up after its create; look it up unless
+  // the caller already knows there is none (the relaunch loop asks again later).
+  if (params.sourceMint && params.feeSharing === undefined) {
     params = { ...params, feeSharing: await fetchFeeSharing(connection, new PublicKey(params.sourceMint)) };
   }
 
-  const { mintKeypair, instructions, computeUnitLimit } = await prepareLaunch({
-    connection,
-    payer: wallet.publicKey,
-    params,
-    settings,
-  });
+  const cache = chainCache(connection);
+  const [{ mintKeypair, instructions, computeUnitLimit }, { blockhash, lastValidBlockHeight }] = await Promise.all([
+    prepareLaunch({ connection, payer: wallet.publicKey, params, settings }),
+    cache.getBlockhash(),
+  ]);
   const mint = mintKeypair.publicKey;
   onMint?.(mint);
-
-  const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed");
   const tx = buildLaunchTransaction({
     payer: wallet.publicKey,
     instructions,
@@ -653,9 +661,11 @@ export async function launchCoin({
     ? await sendViaJito(connection, tx, settings.jitoUrl)
     : await sendViaRpc(connection, tx);
   log.info(`sent${settings.jitoUrl ? " via jito" : ""} ${txUrl(signature)}`);
+  cache.invalidateBalance(wallet.publicKey);
 
   const confirmation = await connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, "confirmed");
   if (confirmation.value.err) {
+    for (const line of await failureLines(connection, signature)) log.error("  " + line);
     throw new Error(`launch transaction failed on-chain: ${JSON.stringify(confirmation.value.err)}`);
   }
 
