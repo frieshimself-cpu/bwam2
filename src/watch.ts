@@ -2,7 +2,7 @@ import { Connection, Keypair, PublicKey } from "@solana/web3.js";
 import { PUMP_PROGRAM_ID } from "@pump-fun/pump-sdk";
 import type { RelaunchSettings } from "./config.js";
 import { log, short } from "./log.js";
-import { createCallIn, describeParams, pumpUrl, type CreateCall } from "./pump.js";
+import { createCallFromLogs, createCallIn, describeParams, pumpUrl, type CreateCall } from "./pump.js";
 import { relaunchUntilBought, type Launch, type WindowResult } from "./relaunch.js";
 import { getParsedTx } from "./rpc.js";
 
@@ -52,8 +52,13 @@ export function watchWallet(options: WatchOptions): WatchHandle {
       if (!logs.some((l) => l.includes(programId)) || !logs.some((l) => CREATE_LOG.test(l))) return;
 
       try {
-        const tx = await getParsedTx(connection, signature);
-        const created = tx && createCallIn(tx);
+        // Fast path: the CreateEvent is in the notification's logs, so there is
+        // nothing to fetch. Fall back to the parsed transaction if it is missing.
+        let created = createCallFromLogs(logs);
+        if (!created) {
+          const tx = await getParsedTx(connection, signature);
+          created = tx && createCallIn(tx);
+        }
         if (!created || !created.user.equals(devWallet)) return;
         if (ownMints.has(created.mint.toBase58())) return;
 
@@ -91,7 +96,10 @@ export function watchWallet(options: WatchOptions): WatchHandle {
         log.error(`handling ${signature} failed: ${(e as Error).message}`);
       }
     },
-    "confirmed",
+    // "processed": act as soon as a validator has executed the launch, about a
+    // second before it is confirmed. A processed transaction can in rare cases
+    // be dropped; the copy then simply has no original, which costs one launch.
+    "processed",
   );
 
   log.info(`watching ${short(devWallet)} for pump.fun launches; relaunches go out from ${short(wallet.publicKey)}`);

@@ -200,6 +200,43 @@ export function createCallIn(tx: ParsedTransactionWithMeta): CreateCall | null {
   return null;
 }
 
+const CREATE_EVENT_DISC = eventDiscriminator("CreateEvent");
+
+/**
+ * The create call decoded straight from a transaction's log messages (the
+ * program logs its CreateEvent as `Program data: <base64>`), so a launch can
+ * be acted on from the websocket notification alone, before the transaction
+ * is even confirmed. Null when the logs carry no CreateEvent.
+ */
+export function createCallFromLogs(logs: string[]): CreateCall | null {
+  for (const line of logs) {
+    if (!line.startsWith("Program data: ")) continue;
+    const data = Buffer.from(line.slice("Program data: ".length), "base64");
+    if (data.length < 8 || !data.subarray(0, 8).equals(CREATE_EVENT_DISC)) continue;
+    try {
+      const ev = PUMP_SDK.decodeCreateEventBc(data.subarray(8));
+      return {
+        mint: ev.mint,
+        user: ev.user,
+        v2: true,
+        name: ev.name,
+        symbol: ev.symbol,
+        uri: ev.uri,
+        mayhemMode: ev.isMayhemMode,
+        cashback: ev.isCashbackEnabled,
+        creatorFeeBps: ev.creatorFeeBps.toNumber(),
+        holderReward: ev.isHolderReward,
+        quoteMint: isSolQuote(ev.quoteMint) ? null : ev.quoteMint.toBase58(),
+        creator: PublicKey.isOnCurve(ev.creator.toBytes()) ? ev.creator.toBase58() : null,
+        sourceMint: ev.mint.toBase58(),
+      };
+    } catch (err) {
+      log.warn(`could not decode CreateEvent from logs: ${(err as Error).message}`);
+    }
+  }
+  return null;
+}
+
 /** Every bonding-curve TradeEvent a parsed transaction emitted. */
 export function tradeEventsIn(tx: ParsedTransactionWithMeta): TradeEventBc[] {
   const events: TradeEventBc[] = [];
@@ -241,7 +278,11 @@ export async function fetchExternalBuys({
 }): Promise<ExternalBuy[]> {
   const curve = bondingCurvePda(mint);
   const infos = await connection.getSignaturesForAddress(curve, { until: since || undefined, limit: 100 }, "confirmed");
-  const fresh = infos.filter((info) => !info.err && !seen.has(info.signature)).map((info) => info.signature);
+  // `since` itself is excluded explicitly too: when the create is not yet
+  // confirmed, `until` cannot stop at it and the dev's own first buy would count.
+  const fresh = infos
+    .filter((info) => !info.err && info.signature !== since && !seen.has(info.signature))
+    .map((info) => info.signature);
   if (fresh.length === 0) return [];
 
   const buys: ExternalBuy[] = [];
