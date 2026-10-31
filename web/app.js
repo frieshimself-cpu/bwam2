@@ -4,8 +4,8 @@ function initDashboard({ apiBase, token, onUnauthorized }) {
   const $ = (id) => document.getElementById(id);
   const API = (apiBase || "").replace(/\/$/, "");
   let state = null;
-  let settingsDirty = false;
-  let settingsLoaded = false;
+  let dirty = false; // the user is editing wallets / settings; don't overwrite their input
+  let loaded = false;
   let events = null;
 
   async function api(path, body) {
@@ -24,6 +24,9 @@ function initDashboard({ apiBase, token, onUnauthorized }) {
   function fmtTime(ts) {
     return new Date(ts).toLocaleTimeString([], { hour12: false });
   }
+  function short(a) {
+    return a ? `${a.slice(0, 4)}…${a.slice(-4)}` : "";
+  }
   function el(tag, attrs = {}, children = []) {
     const node = document.createElement(tag);
     for (const [k, v] of Object.entries(attrs)) {
@@ -41,14 +44,14 @@ function initDashboard({ apiBase, token, onUnauthorized }) {
     title.append(`"${run.source.name}" ($${run.source.symbol})`);
     if (run.outcome) title.append(el("span", { class: `outcome ${run.outcome}`, text: run.outcome }));
     wrap.append(title);
-    const meta = [run.source.summary, run.trigger === "watch" ? `copied from ${run.devWallet}` : "manual relaunch", `started ${fmtTime(run.startedAt)}`];
+    const meta = [run.source.summary, run.trigger === "watch" ? `copied from ${short(run.devWallet)}` : "manual relaunch", `started ${fmtTime(run.startedAt)}`];
     wrap.append(el("div", { class: "meta", text: meta.join(" · ") }));
     if (run.error) wrap.append(el("div", { class: "notice", text: run.error }));
     const list = el("ul", { class: "launches" });
     for (const launch of run.launches) {
       const window = run.windows.find((w) => w.index === launch.index);
       const li = el("li", {}, [
-        el("span", { class: "idx", text: `#${launch.index}` }),
+        el("span", { class: "idx", text: launch.index === 0 && run.trigger === "watch" ? "orig" : `#${launch.index}` }),
         el("a", { href: launch.url, target: "_blank", rel: "noopener", text: launch.mint }),
       ]);
       if (window) {
@@ -64,11 +67,12 @@ function initDashboard({ apiBase, token, onUnauthorized }) {
 
   function costEstimate(s) {
     const perLaunch = 0.03 + Number(s.devBuySol || 0) + (s.jitoUrl ? Number(s.jitoTipSol || 0) : 0);
-    const launches = Number(s.maxRelaunches || 0) + 1;
-    return `worst case ≈ ${(perLaunch * launches).toFixed(3)} SOL for ${launches} launches`;
+    const copies = Math.max(1, Number(s.maxRelaunches || 0));
+    return `worst case ≈ ${(perLaunch * copies).toFixed(3)} SOL per launch you make (${copies} cop${copies === 1 ? "y" : "ies"})`;
   }
 
-  function fillSettings(s) {
+  // The simple card holds dev buy + test mode; the advanced form holds the rest. Same settings object.
+  function fillAll(s, wallets) {
     const form = $("settings");
     for (const [key, value] of Object.entries(s)) {
       const input = form.elements[key];
@@ -76,22 +80,31 @@ function initDashboard({ apiBase, token, onUnauthorized }) {
       if (input.type === "checkbox") input.checked = !!value;
       else input.value = value;
     }
+    $("dev-buy").value = s.devBuySol;
+    $("test-mode").checked = !!s.dryRun;
+    $("dev-wallets").value = (wallets || []).join("\n");
     $("cost").textContent = costEstimate(s);
   }
 
   function readSettings() {
-    const form = $("settings");
     const out = {};
-    for (const input of form.elements) {
+    for (const input of $("settings").elements) {
       if (!input.name) continue;
       out[input.name] = input.type === "checkbox" ? input.checked : input.value;
     }
+    out.devBuySol = $("dev-buy").value;
+    out.dryRun = $("test-mode").checked;
     return out;
+  }
+
+  function readWallets() {
+    return $("dev-wallets").value.split(/[\s,]+/).map((v) => v.trim()).filter(Boolean);
   }
 
   function render(next) {
     state = next;
     const status = $("status");
+    const testing = state.settings.dryRun;
     if (state.updating) {
       status.textContent = "updating…";
       status.className = "pill busy";
@@ -99,17 +112,16 @@ function initDashboard({ apiBase, token, onUnauthorized }) {
       status.textContent = "RPC not configured";
       status.className = "pill err";
     } else if (state.busy) {
-      status.textContent = "relaunching";
+      status.textContent = testing ? "copying (test mode)" : "copying";
       status.className = "pill busy";
     } else if (state.watching) {
-      status.textContent = `watching ${state.devWallet.slice(0, 4)}…${state.devWallet.slice(-4)}`;
+      status.textContent = `watching ${state.devWallets.length} wallet${state.devWallets.length === 1 ? "" : "s"}${testing ? " (test mode)" : ""}`;
       status.className = "pill on";
     } else {
-      status.textContent = "idle";
+      status.textContent = "stopped";
       status.className = "pill";
     }
 
-    if (document.activeElement !== $("dev-wallet")) $("dev-wallet").value = state.devWallet || "";
     $("launcher").textContent = state.launcher ? state.launcher.address : "not configured";
     $("balance").textContent = state.launcher ? fmtSol(state.launcher.balanceSol) : "—";
     $("version").textContent = state.version || "—";
@@ -119,26 +131,26 @@ function initDashboard({ apiBase, token, onUnauthorized }) {
     const problems = [];
     if (!state.rpc.ok) problems.push(state.rpc.error);
     if (!state.launcher) problems.push(state.launcherError);
+    if (state.launcher && state.launcher.balanceSol !== null && state.launcher.balanceSol < 0.03) {
+      problems.push(`launch wallet is low (${fmtSol(state.launcher.balanceSol)}); each copy costs about 0.03 SOL plus the dev buy`);
+    }
     notice.hidden = problems.length === 0;
     notice.textContent = problems.join(" · ");
 
-    const toggle = $("toggle-watch");
-    toggle.textContent = state.watching ? "Stop watching" : "Start watching";
-    toggle.className = state.watching ? "" : "primary";
-    toggle.disabled = !state.rpc.ok || !state.launcher || (!state.watching && !state.devWallet);
+    const ready = state.rpc.ok && !!state.launcher;
+    $("start").textContent = state.watching ? "Save changes" : "Save & start";
+    $("start").disabled = !ready;
+    $("stop").hidden = !state.watching;
     $("stop-run").hidden = !state.busy;
-    $("relaunch").disabled = state.busy || !state.rpc.ok || !state.launcher;
+    $("relaunch").disabled = state.busy || !ready;
 
-    if (!settingsLoaded || !settingsDirty) {
-      fillSettings(state.settings);
-      settingsLoaded = true;
+    if (!loaded || !dirty) {
+      fillAll(state.settings, state.devWallets);
+      loaded = true;
     }
 
-    const current = $("current");
-    current.replaceChildren(state.current ? renderRun(state.current, true) : el("p", { class: "hint", text: "Nothing running." }));
-
-    const history = $("history");
-    history.replaceChildren(
+    $("current").replaceChildren(state.current ? renderRun(state.current, true) : el("p", { class: "hint", text: "Nothing running." }));
+    $("history").replaceChildren(
       ...(state.history.length
         ? state.history.map((run) => el("div", { class: "history-item" }, [renderRun(run, false)]))
         : [el("p", { class: "hint", text: "No runs yet." })]),
@@ -147,16 +159,14 @@ function initDashboard({ apiBase, token, onUnauthorized }) {
 
   function appendLog(entry) {
     const pre = $("log");
-    const line = el("div", { class: entry.level, text: `[${fmtTime(entry.ts)}] ${entry.msg}` });
-    pre.append(line);
+    pre.append(el("div", { class: entry.level, text: `[${fmtTime(entry.ts)}] ${entry.msg}` }));
     while (pre.childElementCount > 400) pre.firstChild.remove();
     pre.scrollTop = pre.scrollHeight;
   }
 
   function connect() {
     if (events) events.close();
-    const url = `${API}/api/events${token ? `?token=${encodeURIComponent(token)}` : ""}`;
-    events = new EventSource(url);
+    events = new EventSource(`${API}/api/events${token ? `?token=${encodeURIComponent(token)}` : ""}`);
     events.addEventListener("state", (e) => {
       const next = JSON.parse(e.data);
       if (!state) {
@@ -172,7 +182,6 @@ function initDashboard({ apiBase, token, onUnauthorized }) {
     };
   }
 
-  // A plain request first: it exposes a 401 (bad/missing token), which EventSource cannot.
   function start() {
     api("/api/state")
       .then(() => connect())
@@ -187,33 +196,42 @@ function initDashboard({ apiBase, token, onUnauthorized }) {
     appendLog({ ts: Date.now(), level: "error", msg: err.message });
   }
 
-  $("set-dev-wallet").addEventListener("click", () => api("/api/dev-wallet", { address: $("dev-wallet").value }).then(render).catch(fail));
-  $("dev-wallet").addEventListener("keydown", (e) => {
-    if (e.key === "Enter") $("set-dev-wallet").click();
+  // Save wallets + settings, then make sure watching is on.
+  async function saveAndStart() {
+    const wallets = readWallets();
+    if (wallets.length === 0) throw new Error("paste at least one wallet address to copy");
+    await api("/api/dev-wallets", { addresses: wallets });
+    await api("/api/settings", readSettings());
+    const next = await api("/api/watch", { on: true });
+    dirty = false;
+    render(next);
+  }
+
+  for (const id of ["dev-wallets", "dev-buy", "test-mode"]) $(id).addEventListener("input", () => (dirty = true));
+  $("settings").addEventListener("input", () => {
+    dirty = true;
+    $("cost").textContent = costEstimate(readSettings());
   });
-  $("toggle-watch").addEventListener("click", () => api("/api/watch", { on: !state.watching }).then(render).catch(fail));
-  $("update").addEventListener("click", () => {
-    if (!window.confirm("Pull the latest version from GitHub and restart the backend? Watching resumes by itself afterwards.")) return;
-    api("/api/update", {}).then(render).catch(fail);
-  });
+  $("start").addEventListener("click", () => saveAndStart().catch(fail));
+  $("stop").addEventListener("click", () => api("/api/watch", { on: false }).then(render).catch(fail));
   $("stop-run").addEventListener("click", () => api("/api/stop", {}).then(render).catch(fail));
+  $("settings").addEventListener("submit", (e) => {
+    e.preventDefault();
+    api("/api/settings", readSettings())
+      .then((next) => {
+        dirty = false;
+        render(next);
+      })
+      .catch(fail);
+  });
   $("relaunch").addEventListener("click", () => {
     const mint = $("relaunch-mint").value.trim();
     if (!mint) return;
     api("/api/relaunch", { mint }).then(render).catch(fail);
   });
-  $("settings").addEventListener("input", () => {
-    settingsDirty = true;
-    $("cost").textContent = costEstimate(readSettings());
-  });
-  $("settings").addEventListener("submit", (e) => {
-    e.preventDefault();
-    api("/api/settings", readSettings())
-      .then((next) => {
-        settingsDirty = false;
-        render(next);
-      })
-      .catch(fail);
+  $("update").addEventListener("click", () => {
+    if (!window.confirm("Pull the latest version from GitHub and restart the backend? Watching resumes by itself afterwards.")) return;
+    api("/api/update", {}).then(render).catch(fail);
   });
 
   start();

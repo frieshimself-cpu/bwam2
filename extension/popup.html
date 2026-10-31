@@ -12,22 +12,28 @@
   </header>
 
   <main>
-    <section class="card" id="wallet-card">
-      <h2>Developer wallet to copy</h2>
-      <div class="row">
-        <input id="dev-wallet" placeholder="developer wallet address" spellcheck="false" />
-        <button id="set-dev-wallet">Set</button>
+    <section class="card" id="main-card">
+      <h2>Wallets to copy</h2>
+      <textarea id="dev-wallets" rows="3" placeholder="paste wallet address(es), one per line" spellcheck="false"></textarea>
+      <div class="grid simple">
+        <label>Dev buy (SOL) <input id="dev-buy" type="number" min="0" step="0.001" /></label>
+        <label class="check"><input id="test-mode" type="checkbox" /> Test mode (simulate only)</label>
       </div>
       <div class="row">
-        <button id="toggle-watch" class="primary">Start watching</button>
+        <button id="start" class="primary">Save &amp; start</button>
+        <button id="stop" hidden>Stop</button>
         <button id="stop-run" class="danger" hidden>Stop current run</button>
       </div>
       <dl class="kv">
         <dt>Launch wallet</dt><dd id="launcher">—</dd>
         <dt>Balance</dt><dd id="balance">—</dd>
-        <dt>Version</dt><dd><span id="version">—</span> <button id="update" class="small">Update server</button></dd>
       </dl>
       <p id="notice" class="notice" hidden></p>
+    </section>
+
+    <section class="card" id="log-card">
+      <h2>Log</h2>
+      <pre id="log"></pre>
     </section>
 
     <section class="card" id="current-card">
@@ -35,44 +41,35 @@
       <div id="current" class="run"><p class="hint">Nothing running.</p></div>
     </section>
 
-    <section class="card">
+    <details class="card" id="advanced">
+      <summary>Advanced</summary>
       <h2>Relaunch settings</h2>
       <form id="settings" class="grid">
-        <label>Relaunches after the first <input name="maxRelaunches" type="number" min="0" step="1" /></label>
-        <label>Window per launch (sec) <input name="intervalSec" type="number" min="10" step="1" /></label>
+        <label>Copies per launch <input name="maxRelaunches" type="number" min="0" step="1" /></label>
+        <label>Wait between copies (sec) <input name="intervalSec" type="number" min="0" step="1" /></label>
         <label>Check every (sec) <input name="pollSec" type="number" min="2" step="1" /></label>
         <label>Stop after outside buys (0 = never) <input name="stopOnBuys" type="number" min="0" step="1" /></label>
-        <label>Dev buy (SOL) <input name="devBuySol" type="number" min="0" step="0.001" /></label>
         <label>Priority fee (µlamports/CU) <input name="priorityFeeMicroLamports" type="number" min="0" step="1000" /></label>
-        <label>Jito URL (empty = RPC) <input name="jitoUrl" placeholder="https://mainnet.block-engine.jito.wtf" /></label>
+        <label>Jito URL (empty = RPC) <input name="jitoUrl" placeholder="https://frankfurt.mainnet.block-engine.jito.wtf" /></label>
         <label>Jito tip (SOL) <input name="jitoTipSol" type="number" min="0" step="0.0001" /></label>
         <label class="check"><input name="instantCopy" type="checkbox" /> Copy instantly on detection</label>
-        <label class="check"><input name="dryRun" type="checkbox" /> Dry run (simulate only)</label>
         <div class="row"><button type="submit">Save settings</button><span id="cost" class="hint"></span></div>
       </form>
-    </section>
 
-    <section class="card">
       <h2>Relaunch an existing coin</h2>
       <div class="row">
         <input id="relaunch-mint" placeholder="mint address" spellcheck="false" />
         <button id="relaunch">Relaunch now</button>
       </div>
-    </section>
 
-    <section class="card">
-      <h2>Log</h2>
-      <pre id="log"></pre>
-    </section>
-
-    <section class="card">
       <h2>History</h2>
       <div id="history"><p class="hint">No runs yet.</p></div>
-    </section>
 
-    <section class="card">
-      <h2>Backend</h2>
-      <p class="hint">Where the relauncher server runs (<code>npm run serve</code>).</p>
+      <h2>Server</h2>
+      <dl class="kv">
+        <dt>Version</dt><dd><span id="version">—</span> <button id="update" class="small">Update server</button></dd>
+      </dl>
+      <p class="hint">Backend (<code>npm run serve</code>):</p>
       <div class="row">
         <input id="backend-url" placeholder="http://127.0.0.1:3210" spellcheck="false" />
       </div>
@@ -80,7 +77,7 @@
         <input id="backend-token" placeholder="API token (if set)" spellcheck="false" />
         <button id="save-backend">Connect</button>
       </div>
-    </section>
+    </details>
   </main>
 
   <script src="app.js"></script>

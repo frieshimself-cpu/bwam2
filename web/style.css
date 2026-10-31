@@ -17,11 +17,18 @@ h1 { font-size: 17px; margin: 0; }
 h2 { font-size: 13px; margin: 0 0 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
 main { padding: 14px 18px 28px; display: grid; gap: 14px; max-width: 980px; margin: 0 auto; }
 body:not(.popup) main { grid-template-columns: 1fr 1fr; }
-body:not(.popup) #wallet-card, body:not(.popup) #current-card { grid-column: 1 / -1; }
 .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
 .row { display: flex; gap: 8px; align-items: center; margin: 8px 0; flex-wrap: wrap; }
 input { flex: 1; min-width: 0; background: #0b0d11; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; font: inherit; }
 input[type="number"] { width: 110px; flex: 0 0 auto; }
+textarea { width: 100%; background: #0b0d11; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; resize: vertical; margin: 4px 0 10px; }
+.grid.simple { grid-template-columns: auto 1fr; align-items: center; margin-bottom: 4px; }
+body.popup .grid.simple { grid-template-columns: 1fr; }
+details.card > summary { cursor: pointer; color: var(--muted); font-size: 13px; text-transform: uppercase; letter-spacing: .04em; list-style: none; }
+details.card > summary::before { content: "▸ "; }
+details[open].card > summary::before { content: "▾ "; }
+details.card > h2 { margin-top: 16px; }
+body:not(.popup) #main-card, body:not(.popup) #log-card, body:not(.popup) #current-card, body:not(.popup) #advanced { grid-column: 1 / -1; }
 input[type="checkbox"] { width: auto; flex: 0 0 auto; }
 button { background: #262a33; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; font: inherit; cursor: pointer; }
 button:hover { border-color: #3a4050; }

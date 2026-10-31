@@ -113,10 +113,14 @@ The dashboard is at <http://127.0.0.1:3210>.
 
 ## Using it
 
-1. **Developer wallet to copy** – paste the address of whichever of your wallets you're launching from today and press **Set**. Switch it any time; nothing needs importing.
-2. **Start watching** – the backend subscribes to that wallet. Launch on pump.fun from it exactly as you normally do.
-3. The launch is detected, its parameters are read from the create transaction, and the relaunch loop runs from the launch wallet: launch → wait for outside buys → relaunch → … The current run and every mint it produced show up live, with pump.fun links.
-4. **Relaunch an existing coin** – paste any pump.fun mint to copy that coin right now without waiting for a new launch.
+The dashboard is one card:
+
+1. **Wallets to copy** – paste the addresses of the wallets you launch from, one per line. Nothing needs importing; no keys.
+2. **Dev buy (SOL)** – how much the copy buys in its own create transaction (0 = none).
+3. **Test mode** – tick it to simulate every copy without sending anything; untick for real.
+4. **Save & start.** From then on, launch on pump.fun from any of those wallets exactly as you normally do: the launch is detected within a second, its parameters are read from the create transaction, and the copy goes out from the launch wallet immediately. If the copy gets no outside buys within the window, it relaunches again, up to the configured number of copies. The current run and every mint it produced show up live, with pump.fun links.
+
+**Advanced** (collapsed) holds the relaunch policy (copies per launch, wait between copies, stop-on-buys, instant copy), priority fee and Jito, **Relaunch an existing coin** (paste any pump.fun mint to copy it right now), the run history, and the **Update server** button.
 
 ### The extension
 

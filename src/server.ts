@@ -46,7 +46,10 @@ export interface RunRecord {
 }
 
 interface PersistedState {
-  devWallet: string | null;
+  /** Developer wallets to copy. */
+  devWallets: string[];
+  /** @deprecated single-wallet field from earlier versions */
+  devWallet?: string | null;
   /** Resume watching after a restart or reboot. */
   watching: boolean;
   settings: RelaunchSettings;
@@ -56,7 +59,7 @@ interface PersistedState {
 const execFileAsync = promisify(execFile);
 
 const HISTORY_LIMIT = 50;
-const VERSION = "2026-10-31.4";
+const VERSION = "2026-10-31.5";
 const STATIC_TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
@@ -104,10 +107,10 @@ export async function startServer(initialSettings: RelaunchSettings): Promise<vo
 
   // ---- state ---------------------------------------------------------------
   let settings = initialSettings;
-  let devWallet: PublicKey | null = null;
+  let devWallets: PublicKey[] = [];
   let history: RunRecord[] = [];
   let current: RunRecord | null = null;
-  let watcher: WatchHandle | null = null;
+  let watchers: WatchHandle[] = [];
   let watchStopped = false; // set before stopping the watcher so its run is recorded as "stopped"
   let manual: AbortController | null = null;
   let balanceCache: { at: number; sol: number } | null = null;
@@ -131,7 +134,8 @@ export async function startServer(initialSettings: RelaunchSettings): Promise<vo
 
   try {
     const saved = JSON.parse(await readFile(dataFile, "utf8")) as Partial<PersistedState>;
-    if (saved.devWallet) devWallet = new PublicKey(saved.devWallet);
+    const savedWallets = Array.isArray(saved.devWallets) ? saved.devWallets : saved.devWallet ? [saved.devWallet] : [];
+    devWallets = savedWallets.map((w) => new PublicKey(w));
     if (saved.settings) settings = mergeSettings(settings, saved.settings);
     if (Array.isArray(saved.history)) history = saved.history.slice(-HISTORY_LIMIT);
     resumeWatching = saved.watching === true;
@@ -141,7 +145,12 @@ export async function startServer(initialSettings: RelaunchSettings): Promise<vo
 
   async function persist() {
     await mkdir(srv.dataDir, { recursive: true });
-    const state: PersistedState = { devWallet: devWallet?.toBase58() ?? null, watching: !!watcher, settings, history };
+    const state: PersistedState = {
+      devWallets: devWallets.map((w) => w.toBase58()),
+      watching: watchers.length > 0,
+      settings,
+      history,
+    };
     await writeFile(dataFile, JSON.stringify(state, null, 2));
   }
 
@@ -162,8 +171,8 @@ export async function startServer(initialSettings: RelaunchSettings): Promise<vo
       rpc: { ok: !!connection, error: rpcError },
       launcher: launcher ? { address: launcher.publicKey.toBase58(), balanceSol: await launcherBalance() } : null,
       launcherError,
-      devWallet: devWallet?.toBase58() ?? null,
-      watching: !!watcher,
+      devWallets: devWallets.map((w) => w.toBase58()),
+      watching: watchers.length > 0,
       busy: !!current,
       updating,
       version: VERSION,
@@ -235,38 +244,63 @@ export async function startServer(initialSettings: RelaunchSettings): Promise<vo
   function startWatching() {
     if (!connection) throw new HttpError(400, `RPC not configured: ${rpcError}`);
     if (!launcher) throw new HttpError(400, `launch wallet not configured: ${launcherError}`);
-    if (!devWallet) throw new HttpError(400, "set the developer wallet to copy first");
-    const dev = devWallet;
+    if (devWallets.length === 0) throw new HttpError(400, "add at least one wallet to copy first");
+    const rpc = connection;
+    const wallet = launcher;
     watchStopped = false;
-    watcher = watchWallet({
-      connection,
-      wallet: launcher,
-      devWallet: dev,
-      settings: () => settings,
-      canStart: () => !current,
-      onDetect: (call, signature) => {
-        const run = beginRun("watch", call, call.mint, dev);
-        // the original launch is launch #0 of the run
-        run.launches.push({ index: 0, mint: call.mint.toBase58(), url: pumpUrl(call.mint), signature, at: Date.now() });
-      },
-      onLaunch,
-      onWindow,
-      onLoopEnd: () => void endRun(current ? outcomeOf(current, watchStopped) : undefined),
-    });
+    watchers = devWallets.map((dev) =>
+      watchWallet({
+        connection: rpc,
+        wallet,
+        devWallet: dev,
+        settings: () => settings,
+        canStart: () => !current,
+        onDetect: (call, signature) => {
+          const run = beginRun("watch", call, call.mint, dev);
+          // the original launch is launch #0 of the run
+          run.launches.push({ index: 0, mint: call.mint.toBase58(), url: pumpUrl(call.mint), signature, at: Date.now() });
+        },
+        onLaunch,
+        onWindow,
+        onLoopEnd: () => void endRun(current ? outcomeOf(current, watchStopped) : undefined),
+      }),
+    );
     void persist();
     broadcastState();
   }
 
   /** `forRestart` keeps the persisted watching flag so the next start resumes watching. */
   async function stopWatching(forRestart = false) {
-    const w = watcher;
-    watcher = null;
-    if (w) {
+    const stopping = watchers;
+    watchers = [];
+    if (stopping.length) {
       watchStopped = true;
-      await w.stop(); // runs onLoopEnd for an in-progress run
+      await Promise.all(stopping.map((w) => w.stop())); // runs onLoopEnd for an in-progress run
     }
     if (!forRestart) await persist();
     broadcastState();
+  }
+
+  /** Replaces the list of wallets to copy; restarts the watchers if they were running. */
+  async function setDevWallets(raw: unknown) {
+    const list = (Array.isArray(raw) ? raw : String(raw ?? "").split(/[\s,]+/))
+      .map((v) => String(v).trim())
+      .filter(Boolean);
+    const next: PublicKey[] = [];
+    for (const value of list) {
+      try {
+        const key = new PublicKey(value);
+        if (!next.some((k) => k.equals(key))) next.push(key);
+      } catch {
+        throw new HttpError(400, `not a valid Solana address: ${value}`);
+      }
+    }
+    const wasWatching = watchers.length > 0;
+    if (wasWatching) await stopWatching();
+    devWallets = next;
+    await persist();
+    log.info(next.length ? `wallets to copy: ${next.map((k) => k.toBase58()).join(", ")}` : "wallets to copy cleared");
+    if (wasWatching && next.length) startWatching();
   }
 
   /** Pulls the latest code, builds it and exits; systemd starts the new version. */
@@ -322,8 +356,8 @@ export async function startServer(initialSettings: RelaunchSettings): Promise<vo
       manual.abort();
       return;
     }
-    if (watcher && current) {
-      // the watcher's loop shares its abort signal: restart the watcher to end the loop only
+    if (watchers.length && current) {
+      // the watcher's loop shares its abort signal: restart the watchers to end the loop only
       await stopWatching();
       startWatching();
     }
@@ -371,24 +405,15 @@ export async function startServer(initialSettings: RelaunchSettings): Promise<vo
         });
         return undefined; // stream stays open
       }
-      case "POST /api/dev-wallet": {
+      case "POST /api/dev-wallets": {
         const body = await readJsonBody(req);
-        const raw = typeof body.address === "string" ? body.address.trim() : "";
-        let next: PublicKey | null = null;
-        if (raw) {
-          try {
-            next = new PublicKey(raw);
-          } catch {
-            throw new HttpError(400, "not a valid Solana address");
-          }
-        }
-        devWallet = next;
-        await persist();
-        log.info(next ? `developer wallet to copy set to ${next.toBase58()}` : "developer wallet cleared");
-        if (watcher) {
-          await stopWatching();
-          if (next) startWatching();
-        }
+        await setDevWallets(body.addresses);
+        return stateJson();
+      }
+      case "POST /api/dev-wallet": {
+        // earlier single-wallet form of the call above
+        const body = await readJsonBody(req);
+        await setDevWallets(typeof body.address === "string" ? [body.address] : []);
         return stateJson();
       }
       case "POST /api/settings": {
@@ -405,7 +430,7 @@ export async function startServer(initialSettings: RelaunchSettings): Promise<vo
       case "POST /api/watch": {
         const body = await readJsonBody(req);
         if (body.on === false) await stopWatching();
-        else if (!watcher) startWatching();
+        else if (watchers.length === 0) startWatching();
         return stateJson();
       }
       case "POST /api/relaunch": {
@@ -464,8 +489,8 @@ export async function startServer(initialSettings: RelaunchSettings): Promise<vo
   log.info(`dashboard on http://${srv.host}:${srv.port}${srv.apiToken ? " (API token required)" : ""} — version ${VERSION}`);
   if (rpcError) log.warn(`RPC not configured: ${rpcError}`);
   if (launcherError) log.warn(`launch wallet not configured: ${launcherError}`);
-  if (devWallet) log.info(`developer wallet to copy: ${devWallet.toBase58()}`);
-  if (resumeWatching && devWallet && connection && launcher) {
+  if (devWallets.length) log.info(`wallets to copy: ${devWallets.map((w) => w.toBase58()).join(", ")}`);
+  if (resumeWatching && devWallets.length && connection && launcher) {
     try {
       startWatching();
     } catch (err) {
