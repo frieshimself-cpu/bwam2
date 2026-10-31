@@ -11,7 +11,8 @@
 # existing .env and wallet are kept.
 #
 # Non-interactive use: HELIUS_RPC_URL=... DOMAIN=... bash setup.sh
-# (WALLET_PRIVATE_KEY=... too, to use a wallet you already have)
+# (WALLET_PRIVATE_KEY=... too, to use a wallet you already have; API_TOKEN=... to
+# choose the token; DOMAIN=auto for HTTPS on <ip>.sslip.io without owning a domain)
 set -euo pipefail
 
 REPO="${REPO:-https://github.com/frieshimself-cpu/bwam2.git}"
@@ -63,12 +64,16 @@ ask() {
   printf -v "$var" '%s' "$value"
 }
 
+IP=$(curl -fsS -4 https://api.ipify.org 2>/dev/null || hostname -I | awk '{print $1}')
+# DOMAIN=auto: a hostname that resolves to this server's IP, so Caddy can get a real certificate.
+[ "$DOMAIN" != "auto" ] || DOMAIN="${IP//./-}.sslip.io"
+
 if [ ! -f .env ]; then
   echo
   echo "The Helius URL goes into $APP/.env now and nowhere else."
   ask "Helius RPC URL (https://mainnet.helius-rpc.com/?api-key=...): " HELIUS_RPC_URL
   [ -n "$DOMAIN" ] || ask "Domain pointed at this server for HTTPS (leave blank to use an SSH tunnel): " DOMAIN
-  API_TOKEN=$(openssl rand -hex 24)
+  API_TOKEN="${API_TOKEN:-$(openssl rand -hex 24)}"
   (
     umask 077
     cat > .env <<EOF
@@ -114,7 +119,6 @@ else
   exit 1
 fi
 
-IP=$(curl -fsS -4 https://api.ipify.org 2>/dev/null || hostname -I | awk '{print $1}')
 echo
 echo "================ pump-relauncher is running ================"
 if [ -n "$DOMAIN" ]; then
