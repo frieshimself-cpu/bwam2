@@ -1,6 +1,6 @@
 // Shared dashboard logic for the website (boot.js) and the extension popup (popup.js).
 // eslint-disable-next-line no-unused-vars
-function initDashboard({ apiBase, token }) {
+function initDashboard({ apiBase, token, onUnauthorized }) {
   const $ = (id) => document.getElementById(id);
   const API = (apiBase || "").replace(/\/$/, "");
   let state = null;
@@ -13,6 +13,7 @@ function initDashboard({ apiBase, token }) {
     if (token) headers.authorization = `Bearer ${token}`;
     const res = await fetch(`${API}${path}`, { method: body ? "POST" : "GET", headers, body: body ? JSON.stringify(body) : undefined });
     const json = await res.json().catch(() => ({}));
+    if (res.status === 401 && onUnauthorized) onUnauthorized();
     if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
     return json;
   }
@@ -166,6 +167,17 @@ function initDashboard({ apiBase, token }) {
     };
   }
 
+  // A plain request first: it exposes a 401 (bad/missing token), which EventSource cannot.
+  function start() {
+    api("/api/state")
+      .then(() => connect())
+      .catch((err) => {
+        $("status").textContent = /401/.test(err.message) ? "needs API token" : "backend unreachable";
+        $("status").className = "pill err";
+        fail(err);
+      });
+  }
+
   function fail(err) {
     appendLog({ ts: Date.now(), level: "error", msg: err.message });
   }
@@ -195,5 +207,5 @@ function initDashboard({ apiBase, token }) {
       .catch(fail);
   });
 
-  connect();
+  start();
 }

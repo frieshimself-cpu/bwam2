@@ -17,7 +17,21 @@ Built on the official `@pump-fun/pump-sdk`, against your Helius RPC. Nothing
 goes through third-party transaction APIs; the launch key never leaves the
 backend.
 
-## Setup
+## One-command install on a server
+
+On a fresh Ubuntu/Debian VPS, as root:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/frieshimself-cpu/bwam2/claude/laughing-faraday-t7oy24/deploy/setup.sh | bash
+```
+
+It installs Node, the code and a systemd service, asks for your Helius RPC URL
+and the launch wallet's private key (typed hidden, written only to
+`/opt/pump-relauncher/.env`), optionally sets up HTTPS with Caddy if you give it
+a domain, and prints the dashboard address and an API token. Re-run it to
+update. Logs: `journalctl -u pump-relauncher -f`.
+
+## Manual setup
 
 ```bash
 npm install

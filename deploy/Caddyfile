@@ -1,0 +1,12 @@
+# Caddy terminates TLS (automatic Let's Encrypt certificates) and proxies to the backend on 127.0.0.1:3210.
+# deploy/setup.sh replaces relaunch.example.com with your domain.
+relaunch.example.com {
+	encode gzip
+	reverse_proxy 127.0.0.1:3210 {
+		# the dashboard's live log is a server-sent event stream: never buffer it
+		flush_interval -1
+		transport http {
+			read_timeout 0
+		}
+	}
+}

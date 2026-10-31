@@ -1,0 +1,22 @@
+# systemd unit: /etc/systemd/system/pump-relauncher.service (installed by deploy/setup.sh)
+[Unit]
+Description=pump-relauncher — copies a developer wallet's pump.fun launches and relaunches them
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=relauncher
+WorkingDirectory=/opt/pump-relauncher
+# .env is read from the working directory
+ExecStart=/usr/bin/node dist/cli.js serve
+Restart=always
+RestartSec=3
+# Binds 127.0.0.1 only; Caddy (if configured) is the only thing exposed.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/opt/pump-relauncher/data
+
+[Install]
+WantedBy=multi-user.target
