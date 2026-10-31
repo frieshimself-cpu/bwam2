@@ -16,14 +16,18 @@ import {
 import { NATIVE_MINT } from "@solana/spl-token";
 import {
   OnlinePumpSdk,
+  PUMP_AMM_PROGRAM_ID,
   PUMP_PROGRAM_ID,
   PUMP_SDK,
   bondingCurvePda,
+  canonicalPumpPoolPdaWithQuote,
   getBuyTokenAmountFromSolAmount,
   pumpIdl,
+  type MultiHopHop,
   type PumpQuoteAccounts,
   type TradeEventBc,
 } from "@pump-fun/pump-sdk";
+import { TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import BN from "bn.js";
 import bs58 from "bs58";
 import { chainCache } from "./cache.js";
@@ -334,6 +338,36 @@ export interface PreparedLaunch {
   computeUnitLimit: number;
 }
 
+/**
+ * The route a dev buy on a token-paired coin takes, as pump.fun's site does
+ * it: SOL → the quote asset on its own pump.fun venue (bonding curve while it
+ * is live, its canonical PumpSwap pool after), then quote → the new coin on
+ * its fresh curve. Null when the quote asset trades nowhere on pump.fun
+ * (e.g. a tokenized stock, which the site routes through other DEXes).
+ */
+async function pairedDevBuyHops(
+  connection: Connection,
+  quoteMint: PublicKey,
+  quoteTokenProgram: PublicKey,
+  newMint: PublicKey,
+): Promise<MultiHopHop[] | null> {
+  const [curveInfo, poolInfo] = await connection.getMultipleAccountsInfo([
+    bondingCurvePda(quoteMint),
+    canonicalPumpPoolPdaWithQuote(quoteMint, NATIVE_MINT),
+  ]);
+  let venue: MultiHopHop["venue"] | null = null;
+  if (curveInfo?.owner.equals(PUMP_PROGRAM_ID)) {
+    const curve = PUMP_SDK.decodeBondingCurve(curveInfo);
+    if (!curve.complete && isSolQuote(curve.quoteMint) && !curve.isMayhemMode) venue = "curve";
+  }
+  if (!venue && poolInfo?.owner.equals(PUMP_AMM_PROGRAM_ID)) venue = "pool";
+  if (!venue) return null;
+  return [
+    { venue, baseMint: quoteMint, quoteMint: NATIVE_MINT, baseTokenProgram: quoteTokenProgram, quoteTokenProgram: TOKEN_PROGRAM_ID },
+    { venue: "curve", baseMint: newMint, quoteMint, baseTokenProgram: TOKEN_2022_PROGRAM_ID, quoteTokenProgram },
+  ];
+}
+
 type LaunchSettings = Pick<RelaunchSettings, "devBuySol" | "priorityFeeMicroLamports" | "jitoUrl" | "jitoTipSol">;
 
 /**
@@ -404,9 +438,32 @@ export async function prepareLaunch({
   let computeUnitLimit = 250_000;
 
   if (devBuyLamports.isZero() || quote) {
-    if (!devBuyLamports.isZero()) log.warn("dev buy is only applied to SOL-quoted launches — creating without one");
     instructions.push(await PUMP_SDK.createV2Instruction({ ...common, ...quote }));
     if (quote) computeUnitLimit = 400_000;
+    if (quote && !devBuyLamports.isZero()) {
+      // A paired coin's dev buy is paid in the quote asset: route SOL through it, like the site does.
+      const hops = params.mayhemMode
+        ? null
+        : await pairedDevBuyHops(connection, quote.quoteMint, quote.quoteTokenProgram, mintKeypair.publicKey);
+      if (!hops) {
+        log.warn(
+          params.mayhemMode
+            ? "dev buy skipped: pump.fun routes refuse mayhem-mode curves"
+            : `dev buy skipped: ${short(quote.quoteMint)} has no pump.fun venue to buy it with SOL`,
+        );
+      } else {
+        instructions.push(
+          ...(await PUMP_SDK.multiHopSwapInstructions({
+            user: payer,
+            hops,
+            side: "buy",
+            amountIn: devBuyLamports,
+            minAmountOut: new BN(1),
+          })),
+        );
+        computeUnitLimit = 900_000;
+      }
+    }
   } else {
     const feeConfig = await cache.getFeeConfig();
     const amount = getBuyTokenAmountFromSolAmount({

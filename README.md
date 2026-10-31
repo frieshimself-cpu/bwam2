@@ -154,7 +154,7 @@ Set `HOST=0.0.0.0`, set an `API_TOKEN`, and put it behind HTTPS (Caddy, nginx). 
 
 The fee split / donation setup is read from the original coin again right before every launch, since pump.fun's site sets it up a moment after the create.
 
-A dev buy (`DEV_BUY_SOL`) is applied to SOL-quoted launches only; token-quoted launches are created without one.
+A dev buy (`DEV_BUY_SOL`) on a SOL-quoted coin is a plain first buy. On a coin paired with a pump.fun coin (one with its own bonding curve or PumpSwap pool, e.g. OTC), the SOL is routed through that coin in the same transaction, as pump.fun's site does. When the quote asset has no pump.fun venue for the SOL leg (tokenized stocks, pre-IPO tokens), the copy is created and the dev buy is skipped with a note in the log.
 
 Transactions are built as **version 1** transactions, the same kind pump.fun's site sends, so create + first buy + tip fit in one transaction without a lookup table.
 
