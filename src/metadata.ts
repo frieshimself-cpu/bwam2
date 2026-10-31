@@ -3,6 +3,7 @@ import { extname, basename, resolve, dirname } from "node:path";
 import { Connection, PublicKey } from "@solana/web3.js";
 import { TOKEN_2022_PROGRAM_ID, getTokenMetadata } from "@solana/spl-token";
 import { OnlinePumpSdk, bondingCurvePda } from "@pump-fun/pump-sdk";
+import { fetchFeeSharing } from "./fees.js";
 import { createCallIn, type LaunchParams } from "./pump.js";
 import { getParsedTxs } from "./rpc.js";
 import { log } from "./log.js";
@@ -147,6 +148,9 @@ export async function paramsFromMint(connection: Connection, mint: PublicKey): P
     creatorFeeBps: curve.creatorFeeBps.toNumber(),
     holderReward: curve.isHolderReward,
     quoteMint: curve.quoteMint.equals(PublicKey.default) ? null : curve.quoteMint.toBase58(),
+    creator: PublicKey.isOnCurve(curve.creator.toBytes()) ? curve.creator.toBase58() : null,
+    sourceMint: mint.toBase58(),
+    feeSharing: await fetchFeeSharing(connection, mint),
   };
 
   // create_v2 coins are Token-2022 mints carrying their metadata on the mint itself.

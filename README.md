@@ -141,7 +141,12 @@ Set `HOST=0.0.0.0`, set an `API_TOKEN`, and put it behind HTTPS (Caddy, nginx). 
 | creator fee bps ("tax") | same (while pump.fun has per-coin fees enabled) |
 | holder-reward flag | same (while enabled on pump.fun) |
 | mayhem mode | same |
+| creator fee recipient | the original creator wallet receives the copy's creator fees too |
+| fee split (up to 10 recipients) | recreated on the copy with the same recipients and percentages |
+| donations (donate.gg) | a new donation escrow for the copy, same donate.gg config |
 | cashback flag | pump.fun no longer allows cashback on new coins; dropped with a warning |
+
+The fee split / donation setup is read from the original coin again right before every launch, since pump.fun's site sets it up a moment after the create.
 
 A dev buy (`DEV_BUY_SOL`) is applied to SOL-quoted launches only; token-quoted launches are created without one.
 

@@ -27,6 +27,7 @@ import {
 import BN from "bn.js";
 import bs58 from "bs58";
 import type { RelaunchSettings } from "./config.js";
+import { describeFeeSharing, feeSharingInstructions, fetchFeeSharing, type FeeSharing } from "./fees.js";
 import { getParsedTxs } from "./rpc.js";
 import { log, short } from "./log.js";
 
@@ -43,6 +44,12 @@ export interface LaunchParams {
   holderReward: boolean;
   /** The coin/stock the curve is quoted in; null = SOL. */
   quoteMint: string | null;
+  /** The original creator wallet (receives the creator fee); null when it was a program account. */
+  creator?: string | null;
+  /** The coin these parameters were read from; its fee-sharing config is re-read at every launch. */
+  sourceMint?: string | null;
+  /** Fee split / donation setup to recreate; undefined = not looked up yet, null = none. */
+  feeSharing?: FeeSharing | null;
 }
 
 export interface CreateCall extends LaunchParams {
@@ -108,6 +115,8 @@ export function describeParams(p: LaunchParams): string {
   if (p.cashback) parts.push("cashback");
   if (p.holderReward) parts.push("holder rewards");
   if (p.mayhemMode) parts.push("mayhem mode");
+  if (p.feeSharing) parts.push(describeFeeSharing(p.feeSharing));
+  else if (p.creator) parts.push(`fees → ${short(p.creator)}`);
   return parts.join(", ");
 }
 
@@ -144,7 +153,8 @@ export function createCallIn(tx: ParsedTransactionWithMeta): CreateCall | null {
     const name = readString();
     const symbol = readString();
     const uri = readString();
-    offset += 32; // creator
+    const creatorKey = new PublicKey(data.subarray(offset, offset + 32));
+    offset += 32;
 
     // create_v2 trailing args: is_mayhem_mode, then OptionBool / OptionU64 /
     // OptionBool, each only present when the sender's program version knew it.
@@ -182,6 +192,9 @@ export function createCallIn(tx: ParsedTransactionWithMeta): CreateCall | null {
       creatorFeeBps,
       holderReward,
       quoteMint,
+      // a wallet is on the curve; program-owned creators (holder-reward / sharing PDAs) are not
+      creator: PublicKey.isOnCurve(creatorKey.toBytes()) ? creatorKey.toBase58() : null,
+      sourceMint: ix.accounts[0].toBase58(),
     };
   }
   return null;
@@ -319,13 +332,20 @@ export async function prepareLaunch({
     };
   }
 
+  // A fee split needs the creator to sign its setup, so the launch wallet is
+  // the creator then and the split sends fees on; otherwise the original
+  // creator wallet receives the fee exactly as before.
+  const sharing = params.feeSharing && !holderReward ? params.feeSharing : null;
+  if (params.feeSharing && holderReward) log.warn("holder-reward coin also had a fee split; keeping holder rewards");
+  const creator = sharing ? payer : params.creator ? new PublicKey(params.creator) : payer;
+
   const mintKeypair = Keypair.generate();
   const common = {
     mint: mintKeypair.publicKey,
     name: params.name,
     symbol: params.symbol,
     uri: params.uri,
-    creator: payer,
+    creator,
     user: payer,
     mayhemMode: params.mayhemMode,
     cashback,
@@ -354,6 +374,19 @@ export async function prepareLaunch({
     });
     instructions.push(...(await PUMP_SDK.createV2AndBuyInstructions({ ...common, global, amount, solAmount: devBuyLamports })));
     computeUnitLimit = 400_000;
+  }
+
+  if (sharing) {
+    instructions.push(
+      ...(await feeSharingInstructions({
+        creator: payer,
+        mint: mintKeypair.publicKey,
+        quoteMint: quote?.quoteMint,
+        quoteTokenProgram: quote?.quoteTokenProgram,
+        sharing,
+      })),
+    );
+    computeUnitLimit = 600_000;
   }
 
   const tipLamports = Math.round(settings.jitoTipSol * LAMPORTS_PER_SOL);
@@ -537,6 +570,11 @@ export async function launchCoin({
   onMint?: (mint: PublicKey) => void;
 }): Promise<LaunchResult | null> {
   await assertBalance(connection, wallet.publicKey, settings);
+
+  // The original's fee split is set up after its create, so look again at every launch.
+  if (params.sourceMint) {
+    params = { ...params, feeSharing: await fetchFeeSharing(connection, new PublicKey(params.sourceMint)) };
+  }
 
   const { mintKeypair, instructions, computeUnitLimit } = await prepareLaunch({
     connection,
