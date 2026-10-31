@@ -27,6 +27,7 @@
       <dl class="kv">
         <dt>Launch wallet</dt><dd id="launcher">—</dd>
         <dt>Balance</dt><dd id="balance">—</dd>
+        <dt>Version</dt><dd><span id="version">—</span> <button id="update" class="small">Update server</button></dd>
       </dl>
       <p id="notice" class="notice" hidden></p>
     </section>
@@ -40,7 +41,7 @@
         <label>Stop after outside buys (0 = never) <input name="stopOnBuys" type="number" min="0" step="1" /></label>
         <label>Dev buy (SOL) <input name="devBuySol" type="number" min="0" step="0.001" /></label>
         <label>Priority fee (µlamports/CU) <input name="priorityFeeMicroLamports" type="number" min="0" step="1000" /></label>
-        <label>Jito URL (empty = RPC) <input name="jitoUrl" placeholder="https://mainnet.block-engine.jito.wtf" /></label>
+        <label>Jito URL (empty = RPC) <input name="jitoUrl" placeholder="https://frankfurt.mainnet.block-engine.jito.wtf" /></label>
         <label>Jito tip (SOL) <input name="jitoTipSol" type="number" min="0" step="0.0001" /></label>
         <label class="check"><input name="dryRun" type="checkbox" /> Dry run (simulate only, send nothing)</label>
         <div class="row"><button type="submit">Save settings</button><span id="cost" class="hint"></span></div>

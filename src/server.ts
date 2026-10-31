@@ -1,9 +1,11 @@
 // Dashboard + API for the website and the extension popup. Holds the launch
 // wallet, keeps the watcher alive, streams the log, and persists the chosen
 // developer wallet, settings and run history under DATA_DIR.
+import { execFile } from "node:child_process";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { extname, resolve } from "node:path";
+import { promisify } from "node:util";
 import { Connection, Keypair, LAMPORTS_PER_SOL, PublicKey } from "@solana/web3.js";
 import { mergeSettings, serverSettingsFromEnv, type RelaunchSettings } from "./config.js";
 import { log, onLog, recentLogs } from "./log.js";
@@ -45,11 +47,16 @@ export interface RunRecord {
 
 interface PersistedState {
   devWallet: string | null;
+  /** Resume watching after a restart or reboot. */
+  watching: boolean;
   settings: RelaunchSettings;
   history: RunRecord[];
 }
 
+const execFileAsync = promisify(execFile);
+
 const HISTORY_LIMIT = 50;
+const VERSION = "2026-10-31.3";
 const STATIC_TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
@@ -90,7 +97,10 @@ async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknow
 export async function startServer(initialSettings: RelaunchSettings): Promise<void> {
   const srv = serverSettingsFromEnv();
   const dataFile = resolve(srv.dataDir, "state.json");
-  const webDir = resolve(__dirname, "..", "web");
+  const rootDir = resolve(__dirname, "..");
+  const webDir = resolve(rootDir, "web");
+  let updating = false;
+  let resumeWatching = false;
 
   // ---- state ---------------------------------------------------------------
   let settings = initialSettings;
@@ -124,13 +134,14 @@ export async function startServer(initialSettings: RelaunchSettings): Promise<vo
     if (saved.devWallet) devWallet = new PublicKey(saved.devWallet);
     if (saved.settings) settings = mergeSettings(settings, saved.settings);
     if (Array.isArray(saved.history)) history = saved.history.slice(-HISTORY_LIMIT);
+    resumeWatching = saved.watching === true;
   } catch {
     // first run
   }
 
   async function persist() {
     await mkdir(srv.dataDir, { recursive: true });
-    const state: PersistedState = { devWallet: devWallet?.toBase58() ?? null, settings, history };
+    const state: PersistedState = { devWallet: devWallet?.toBase58() ?? null, watching: !!watcher, settings, history };
     await writeFile(dataFile, JSON.stringify(state, null, 2));
   }
 
@@ -154,6 +165,8 @@ export async function startServer(initialSettings: RelaunchSettings): Promise<vo
       devWallet: devWallet?.toBase58() ?? null,
       watching: !!watcher,
       busy: !!current,
+      updating,
+      version: VERSION,
       settings,
       current,
       history: [...history].reverse(),
@@ -240,6 +253,7 @@ export async function startServer(initialSettings: RelaunchSettings): Promise<vo
       onWindow,
       onLoopEnd: () => void endRun(current ? outcomeOf(current, watchStopped) : undefined),
     });
+    void persist();
     broadcastState();
   }
 
@@ -250,7 +264,37 @@ export async function startServer(initialSettings: RelaunchSettings): Promise<vo
       watchStopped = true;
       await w.stop(); // runs onLoopEnd for an in-progress run
     }
+    await persist();
     broadcastState();
+  }
+
+  /** Pulls the latest code, builds it and exits; systemd starts the new version. */
+  async function selfUpdate() {
+    if (updating) throw new HttpError(409, "an update is already running");
+    if (current) throw new HttpError(409, "a run is in progress; stop it first");
+    updating = true;
+    broadcastState();
+    log.info("updating from GitHub…");
+    try {
+      const { stdout, stderr } = await execFileAsync("bash", [resolve(rootDir, "deploy", "self-update.sh")], {
+        cwd: rootDir,
+        timeout: 15 * 60_000,
+        maxBuffer: 4 * 1024 * 1024,
+      });
+      for (const line of `${stdout}\n${stderr}`.split("\n").filter(Boolean)) log.info(`  ${line}`);
+    } catch (err) {
+      updating = false;
+      const e = err as Error & { stdout?: string; stderr?: string };
+      for (const line of `${e.stdout ?? ""}\n${e.stderr ?? ""}`.split("\n").filter(Boolean).slice(-10)) log.error(`  ${line}`);
+      log.error(`update failed: ${e.message} — still running the previous version`);
+      broadcastState();
+      throw new HttpError(500, "update failed; see the log");
+    }
+    log.info("restarting with the new version…");
+    broadcastState();
+    setTimeout(() => {
+      void stopWatching().finally(() => process.exit(0));
+    }, 500);
   }
 
   async function relaunchManual(mint: PublicKey) {
@@ -378,6 +422,10 @@ export async function startServer(initialSettings: RelaunchSettings): Promise<vo
         await stopRun();
         return stateJson();
       }
+      case "POST /api/update": {
+        await selfUpdate();
+        return stateJson();
+      }
       default:
         throw new HttpError(404, "not found");
     }
@@ -412,10 +460,17 @@ export async function startServer(initialSettings: RelaunchSettings): Promise<vo
   });
 
   await new Promise<void>((resolveListen) => server.listen(srv.port, srv.host, resolveListen));
-  log.info(`dashboard on http://${srv.host}:${srv.port}${srv.apiToken ? " (API token required)" : ""}`);
+  log.info(`dashboard on http://${srv.host}:${srv.port}${srv.apiToken ? " (API token required)" : ""} — version ${VERSION}`);
   if (rpcError) log.warn(`RPC not configured: ${rpcError}`);
   if (launcherError) log.warn(`launch wallet not configured: ${launcherError}`);
-  if (devWallet) log.info(`developer wallet to copy: ${devWallet.toBase58()} (press Start in the dashboard)`);
+  if (devWallet) log.info(`developer wallet to copy: ${devWallet.toBase58()}`);
+  if (resumeWatching && devWallet && connection && launcher) {
+    try {
+      startWatching();
+    } catch (err) {
+      log.warn(`could not resume watching: ${(err as Error).message}`);
+    }
+  }
 
   const shutdown = () => {
     void stopWatching().finally(() => process.exit(0));

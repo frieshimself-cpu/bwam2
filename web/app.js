@@ -92,7 +92,10 @@ function initDashboard({ apiBase, token, onUnauthorized }) {
   function render(next) {
     state = next;
     const status = $("status");
-    if (!state.rpc.ok) {
+    if (state.updating) {
+      status.textContent = "updating…";
+      status.className = "pill busy";
+    } else if (!state.rpc.ok) {
       status.textContent = "RPC not configured";
       status.className = "pill err";
     } else if (state.busy) {
@@ -109,6 +112,8 @@ function initDashboard({ apiBase, token, onUnauthorized }) {
     if (document.activeElement !== $("dev-wallet")) $("dev-wallet").value = state.devWallet || "";
     $("launcher").textContent = state.launcher ? state.launcher.address : "not configured";
     $("balance").textContent = state.launcher ? fmtSol(state.launcher.balanceSol) : "—";
+    $("version").textContent = state.version || "—";
+    $("update").disabled = !!state.updating || !!state.busy;
 
     const notice = $("notice");
     const problems = [];
@@ -187,6 +192,10 @@ function initDashboard({ apiBase, token, onUnauthorized }) {
     if (e.key === "Enter") $("set-dev-wallet").click();
   });
   $("toggle-watch").addEventListener("click", () => api("/api/watch", { on: !state.watching }).then(render).catch(fail));
+  $("update").addEventListener("click", () => {
+    if (!window.confirm("Pull the latest version from GitHub and restart the backend? Watching resumes by itself afterwards.")) return;
+    api("/api/update", {}).then(render).catch(fail);
+  });
   $("stop-run").addEventListener("click", () => api("/api/stop", {}).then(render).catch(fail));
   $("relaunch").addEventListener("click", () => {
     const mint = $("relaunch-mint").value.trim();

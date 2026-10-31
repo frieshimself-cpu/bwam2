@@ -28,6 +28,7 @@ button:hover { border-color: #3a4050; }
 button.primary { background: var(--accent); color: #0b1a10; border-color: transparent; font-weight: 600; }
 button.danger { background: var(--danger); color: #1a0b0b; border-color: transparent; font-weight: 600; }
 button[disabled] { opacity: .5; cursor: default; }
+button.small { padding: 2px 8px; font-size: 11px; margin-left: 6px; vertical-align: middle; }
 .hint { color: var(--muted); font-size: 12.5px; margin: 0 0 8px; line-height: 1.45; }
 .notice { color: var(--warn); font-size: 12.5px; margin: 8px 0 0; }
 .pill { padding: 4px 10px; border-radius: 999px; background: #262a33; font-size: 12px; color: var(--muted); }
