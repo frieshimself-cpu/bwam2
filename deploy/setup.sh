@@ -27,6 +27,11 @@ PORT=3210
 export DEBIAN_FRONTEND=noninteractive
 
 echo ">> packages"
+# On a fresh VPS, cloud-init / unattended-upgrades may still hold the apt lock.
+for _ in $(seq 1 60); do
+  fuser /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock >/dev/null 2>&1 || break
+  sleep 5
+done
 apt-get update -qq
 apt-get install -y -qq curl git ca-certificates gnupg openssl >/dev/null
 
