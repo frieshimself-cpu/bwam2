@@ -60,6 +60,16 @@ function initDashboard({ apiBase, token, onUnauthorized }) {
         li.append(el("span", { class: "result", text: "watching…" }));
       }
       if (launch.notes && launch.notes.length) li.append(el("span", { class: "result", text: launch.notes.join(" · ") }));
+      // a finished copy whose follow-up (fee split / OTC) failed or never ran can be redone
+      const followUpMissing = !launch.notes || launch.notes.length === 0 || launch.notes.some((n) => /failed|refused/.test(n));
+      if (!live && launch.index > 0 && followUpMissing && launch.uri !== undefined) {
+        const retry = el("button", { class: "small", text: "Retry fee routing" });
+        retry.addEventListener("click", () => {
+          retry.disabled = true;
+          api("/api/followup", { mint: launch.mint }).then(render).catch(fail);
+        });
+        li.append(retry);
+      }
       list.append(li);
     }
     wrap.append(list);

@@ -62,7 +62,7 @@ async function fetchWithTimeout(url: string, timeoutMs: number, init: RequestIni
 }
 
 /** The metadata JSON behind `uri`, or null when it cannot be read within `timeoutMs`. */
-export async function fetchMetadata(uri: string, timeoutMs = 1500): Promise<CoinMetadata | null> {
+export async function fetchMetadata(uri: string, timeoutMs = 2500): Promise<CoinMetadata | null> {
   try {
     const res = await fetchWithTimeout(uri, timeoutMs);
     if (!res.ok) return null;

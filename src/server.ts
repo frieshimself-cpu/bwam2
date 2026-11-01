@@ -9,9 +9,11 @@ import { chainCache } from "./cache.js";
 import { promisify } from "node:util";
 import { Connection, Keypair, LAMPORTS_PER_SOL, PublicKey } from "@solana/web3.js";
 import { mergeSettings, serverSettingsFromEnv, type RelaunchSettings } from "./config.js";
-import { log, onLog, recentLogs } from "./log.js";
+import { log, onLog, recentLogs, short } from "./log.js";
 import { paramsFromMint } from "./metadata.js";
 import { describeParams, pumpUrl, type LaunchParams } from "./pump.js";
+import { followUpLaunch } from "./followup.js";
+import { LaunchShared } from "./otc.js";
 import { relaunchUntilBought, type Launch, type WindowResult } from "./relaunch.js";
 import { makeConnection } from "./rpc.js";
 import { sellAll } from "./sell.js";
@@ -64,7 +66,7 @@ interface PersistedState {
 const execFileAsync = promisify(execFile);
 
 const HISTORY_LIMIT = 50;
-const VERSION = "2026-11-01.1";
+const VERSION = "2026-11-01.2";
 const STATIC_TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
@@ -512,6 +514,29 @@ export async function startServer(initialSettings: RelaunchSettings): Promise<vo
       }
       case "POST /api/stop": {
         await stopRun();
+        return stateJson();
+      }
+      case "POST /api/followup": {
+        // Re-run a copy's follow-up (fee split / OTC routing, OTC listing) when it failed.
+        if (!connection) throw new HttpError(400, `RPC not configured: ${rpcError}`);
+        if (!launcher) throw new HttpError(400, `launch wallet not configured: ${launcherError}`);
+        const body = await readJsonBody(req);
+        const mint = String(body.mint ?? "").trim();
+        const record = [current, ...history].find((r) => r?.launches.some((l) => l.mint === mint && l.index > 0));
+        const entry = record?.launches.find((l) => l.mint === mint);
+        if (!record || !entry) throw new HttpError(404, "no copy with that mint in the run history");
+        const launch: Launch = { index: entry.index, mint: new PublicKey(entry.mint), signature: entry.signature, at: entry.at, uri: entry.uri, notes: [] };
+        onLaunchUpdate(launch);
+        log.info(`re-running the follow-up for launch #${launch.index} ${short(launch.mint)}`);
+        void followUpLaunch({
+          connection,
+          wallet: launcher,
+          params: record.source.params,
+          launch,
+          shared: new LaunchShared(record.source.params.feeSharing),
+          settings: () => settings,
+          onUpdate: onLaunchUpdate,
+        });
         return stateJson();
       }
       case "POST /api/update": {

@@ -55,9 +55,16 @@ export async function followUpLaunch(options: FollowUpOptions): Promise<void> {
 
     const otc = isOtcSharing(sharing);
     try {
-      const signature = await applyFeeSharing(options, sharing);
-      log.info(`${tag}: ${otc ? "fees → OTC rewards" : describeFeeSharing(sharing)} set on ${short(launch.mint)} — ${txUrl(signature)}`);
-      note(otc ? "fees → OTC rewards" : describeFeeSharing(sharing));
+      // Re-running the follow-up (the dashboard's retry) must not fail on a split that is already there.
+      const existing = await fetchFeeSharing(options.connection, launch.mint).catch(() => null);
+      if (existing) {
+        log.info(`${tag}: ${short(launch.mint)} already has its fee split (${describeFeeSharing(existing)})`);
+        if (!launch.notes.some((n) => n.startsWith("fees → ") || n.startsWith("fees "))) note(isOtcSharing(existing) ? "fees → OTC rewards" : describeFeeSharing(existing));
+      } else {
+        const signature = await applyFeeSharing(options, sharing);
+        log.info(`${tag}: ${otc ? "fees → OTC rewards" : describeFeeSharing(sharing)} set on ${short(launch.mint)} — ${txUrl(signature)}`);
+        note(otc ? "fees → OTC rewards" : describeFeeSharing(sharing));
+      }
     } catch (err) {
       if (signal?.aborted) return;
       log.error(`${tag}: could not set the fee split on ${short(launch.mint)}: ${(err as Error).message}`);
@@ -109,7 +116,7 @@ async function targetFeeSharing({ connection, params, launch, shared, signal }: 
 }
 
 /** Sends the transaction that puts `sharing` on the copy, as its creator (the launch wallet). */
-async function applyFeeSharing({ connection, wallet, params, launch, settings }: FollowUpOptions, sharing: FeeSharing): Promise<string> {
+async function applyFeeSharing({ connection, wallet, params, launch, settings, signal }: FollowUpOptions, sharing: FeeSharing): Promise<string> {
   const creator = wallet.publicKey;
   let quoteMint = NATIVE_MINT;
   let quoteTokenProgram = TOKEN_PROGRAM_ID;
@@ -126,17 +133,29 @@ async function applyFeeSharing({ connection, wallet, params, launch, settings }:
     await PUMP_SDK.sweepCreatorFeeInstruction({ payer: creator, mint: launch.mint, creator, quoteMint, quoteTokenProgram }),
     ...(await feeSharingInstructions({ creator, mint: launch.mint, quoteMint: tokenQuote, quoteTokenProgram, sharing })),
   ];
-  const { blockhash, lastValidBlockHeight } = await chainCache(connection).getBlockhash();
-  const tx = buildLaunchTransaction({
-    payer: creator,
-    instructions,
-    blockhash,
-    computeUnitLimit: 400_000,
-    priorityFeeMicroLamports: settings().priorityFeeMicroLamports,
-  });
-  tx.sign([wallet]);
-  await simulateOrThrow(connection, tx, "fee split");
-  return sendAndConfirm(connection, tx, { blockhash, lastValidBlockHeight });
+  // The create was confirmed a moment ago, but the RPC node that simulates
+  // may still be a slot behind it and not know the mint yet: retry for a while.
+  const deadline = Date.now() + 15_000;
+  for (let attempt = 1; ; attempt++) {
+    const { blockhash, lastValidBlockHeight } = await chainCache(connection).getBlockhash();
+    const tx = buildLaunchTransaction({
+      payer: creator,
+      instructions,
+      blockhash,
+      computeUnitLimit: 400_000,
+      priorityFeeMicroLamports: settings().priorityFeeMicroLamports,
+    });
+    tx.sign([wallet]);
+    try {
+      await simulateOrThrow(connection, tx, "fee split");
+    } catch (err) {
+      if (signal?.aborted || Date.now() >= deadline) throw err;
+      log.warn(`launch #${launch.index}: fee split simulation failed (attempt ${attempt}); the node may not have the coin yet, retrying`);
+      await sleep(1000, signal);
+      continue;
+    }
+    return sendAndConfirm(connection, tx, { blockhash, lastValidBlockHeight });
+  }
 }
 
 /** Lists the copy on the OTC site with the original's reward setup. */
