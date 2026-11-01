@@ -220,8 +220,8 @@ function initDashboard({ apiBase, token, onUnauthorized }) {
         const notice = $("notice");
         notice.hidden = false;
         notice.textContent = needsToken
-          ? "The server wants its API token. Open Advanced → Backend, paste the token and press Connect."
-          : `Can't reach the server at ${API || window.location.origin}. Open Advanced → Backend, enter the server address and token, press Connect.`;
+          ? "The server wants its API token. Open Advanced → Server, paste the API token and press Connect."
+          : `Can't reach the server at ${API || window.location.origin}. Open Advanced → Server, enter your server's address and API token, press Connect.`;
         $("start").disabled = true;
         const advanced = $("advanced");
         if (advanced && $("backend-url")) advanced.open = true;

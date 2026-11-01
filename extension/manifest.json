@@ -1,11 +1,13 @@
 {
   "manifest_version": 3,
   "name": "Pump Relauncher",
-  "version": "0.1.0",
-  "description": "Copies a developer wallet's pump.fun launches and relaunches them until they get buys.",
+  "version": "0.2.0",
+  "description": "Copies your deployer wallets' pump.fun launches (all at once) and relaunches them from your own deploy wallet.",
   "action": {
     "default_popup": "popup.html",
     "default_title": "Pump Relauncher"
   },
-  "permissions": ["storage"]
+  "permissions": [
+    "storage"
+  ]
 }
