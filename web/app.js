@@ -125,7 +125,8 @@ function initDashboard({ apiBase, token, onUnauthorized }) {
       status.textContent = "RPC not configured";
       status.className = "pill err";
     } else if (state.busy) {
-      status.textContent = testing ? "copying (test mode)" : "copying";
+      const n = (state.active || []).length || 1;
+      status.textContent = `copying ${n} coin${n === 1 ? "" : "s"}${testing ? " (test mode)" : ""}`;
       status.className = "pill busy";
     } else if (state.watching) {
       status.textContent = `watching ${state.devWallets.length} wallet${state.devWallets.length === 1 ? "" : "s"}${testing ? " (test mode)" : ""}`;
@@ -163,14 +164,20 @@ function initDashboard({ apiBase, token, onUnauthorized }) {
     $("start").disabled = !ready;
     $("stop").hidden = !state.watching;
     $("stop-run").hidden = !state.busy;
-    $("relaunch").disabled = state.busy || !ready;
+    $("relaunch").disabled = !ready;
 
     if (!loaded || !dirty) {
       fillAll(state.settings, state.devWallets);
       loaded = true;
     }
 
-    $("current").replaceChildren(state.current ? renderRun(state.current, true) : el("p", { class: "hint", text: "Nothing running." }));
+    // every copy in progress (a backend from before parallel runs only reports `current`)
+    const active = Array.isArray(state.active) ? state.active : state.current ? [state.current] : [];
+    $("current").replaceChildren(
+      ...(active.length
+        ? active.map((run) => el("div", { class: "history-item" }, [renderRun(run, true)]))
+        : [el("p", { class: "hint", text: "Nothing running." })]),
+    );
     $("history").replaceChildren(
       ...(state.history.length
         ? state.history.map((run) => el("div", { class: "history-item" }, [renderRun(run, false)]))

@@ -115,12 +115,12 @@ The dashboard is at <http://127.0.0.1:3210>.
 
 The dashboard is one card:
 
-1. **Wallets to copy** – paste the addresses of the wallets you launch from, one per line. Nothing needs importing; no keys.
+1. **Wallets to copy** – paste the addresses of every deployer wallet you launch from, one per line. Nothing needs importing; no keys. All of them are watched at the same time, and every launch gets its own run: launches that overlap, from one wallet or several, are copied side by side (the dashboard lists them under **Running now**). Adding or removing a wallet while copies are running leaves the other wallets' runs alone.
 2. **Dev buy (SOL)** – how much the copy buys in its own create transaction (0 = none).
 3. **Test mode** – tick it to simulate every copy without sending anything; untick for real.
 4. **Save & start.** From then on, launch on pump.fun from any of those wallets exactly as you normally do: the launch is detected within a second, its parameters are read from the create transaction, and the copy goes out from the launch wallet immediately. If the copy gets no outside buys within the window, it relaunches again, up to the configured number of copies. The current run and every mint it produced show up live, with pump.fun links.
 
-**Import wallet** (next to the launch wallet) lets you deploy from a wallet you already own instead of the generated one: paste its private key once, it is stored only in the server's `.env`, and copies, dev buys and creator fees land in that wallet from then on. **Sell held coins → SOL** liquidates whatever the launch wallet holds back to SOL on the bonding curves (and closes the empty token accounts). A copy whose follow-up (fee split / OTC routing, OTC listing) failed shows a **Retry fee routing** button next to it in the history.
+**Import wallet (private key)** (next to "Deploys from") lets you deploy from a wallet you already own instead of the generated one: paste its private key once, it is stored only in the server's `.env`, and copies, dev buys and creator fees land in that wallet from then on. **Sell held coins → SOL** liquidates whatever the launch wallet holds back to SOL on the bonding curves (and closes the empty token accounts). A copy whose follow-up (fee split / OTC routing, OTC listing) failed shows a **Retry fee routing** button next to it in the history.
 
 **Advanced** (collapsed) holds the relaunch policy (copies per launch, wait between copies, stop-on-buys, instant copy), priority fee and Jito, **Relaunch an existing coin** (paste any pump.fun mint to copy it right now), the run history, and the **Update server** button.
 
@@ -207,4 +207,5 @@ Try anything with `--dry-run` (or the Dry run checkbox) first: it builds and sim
 - Each launch costs roughly 0.02–0.03 SOL in rent and fees, plus `DEV_BUY_SOL` and any Jito tip. The dashboard shows the worst-case total for the current settings, and the backend refuses to launch when the wallet can't cover one launch.
 - Repeated identical launches are visible to everyone and pump.fun's feed may de-rank or flag duplicates. Keep the relaunch count and interval reasonable.
 - pump.fun's IPFS upload endpoint (used only by `launch token.json`) sits behind Cloudflare and sometimes rejects server-side requests. Copying a launch never uploads anything — it reuses the original metadata URI.
-- One run at a time: a second launch from the developer wallet while a run is in progress is logged and ignored.
+- Runs go in parallel and share the one deploy wallet: each copy checks the balance before it goes out, so keep enough SOL for the launches you expect at once. A copy is never copied again, even when the deploy wallet is itself one of the watched wallets.
+- One server holds one deploy wallet and one list of wallets to copy. Someone else should run their own server (the one-command install above) and load the extension against it; importing their key on yours would replace your deploy wallet.

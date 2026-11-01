@@ -11,8 +11,18 @@ const CREATE_LOG = /Instruction: Create(V2)?\s*$/;
 
 export interface WatchHandle {
   readonly devWallet: PublicKey;
-  /** Unsubscribes and aborts any running relaunch loop. */
+  /** Unsubscribes and aborts every relaunch loop this watcher started. */
   stop(): Promise<void>;
+}
+
+/** Callbacks for one detected launch's relaunch loop. */
+export interface RunHooks {
+  onLaunch?: (launch: Launch) => void;
+  onWindow?: (launch: Launch, result: WindowResult) => void;
+  onLaunchUpdate?: (launch: Launch) => void;
+  onLoopEnd?: (launches: Launch[]) => void;
+  /** The loop ended with an error before finishing (e.g. the wallet could not cover a launch). */
+  onLoopError?: (error: Error) => void;
 }
 
 export interface WatchOptions {
@@ -22,30 +32,32 @@ export interface WatchOptions {
   /** The developer wallet to copy: every coin it creates on pump.fun is relaunched. */
   devWallet: PublicKey;
   settings: () => RelaunchSettings;
-  /** Return false to skip a detected launch (e.g. another run is in progress elsewhere). */
-  canStart?: () => boolean;
-  onDetect?: (call: CreateCall, signature: string) => void;
-  onLaunch?: (launch: Launch) => void;
-  onWindow?: (launch: Launch, result: WindowResult) => void;
-  onLaunchUpdate?: (launch: Launch) => void;
-  onLoopEnd?: (launches: Launch[]) => void;
-  /** The loop ended with an error before finishing (e.g. the wallet could not cover a launch). */
-  onLoopError?: (error: Error) => void;
+  /**
+   * Mints this process launched, shared by every watcher: a copy is never
+   * copied again, even when the launch wallet is itself one of the watched
+   * wallets.
+   */
+  ownMints?: Set<string>;
+  /**
+   * A launch was detected and its loop is about to start. `abort` ends that
+   * loop alone. Returns the callbacks for the loop.
+   */
+  onDetect?: (call: CreateCall, signature: string, abort: AbortController) => RunHooks | void;
 }
 
 /**
  * Listens for coins `devWallet` creates on pump.fun (from the site or anything
  * else), copies every launch parameter from the create transaction, and runs
- * the relaunch loop from `wallet`.
+ * the relaunch loop from `wallet`. Every launch gets its own loop, so launches
+ * that follow each other quickly are all copied, side by side.
  */
 export function watchWallet(options: WatchOptions): WatchHandle {
   const { connection, wallet, devWallet, settings } = options;
-  const ownMints = new Set<string>(); // coins this bot launched: never relaunch a relaunch
+  const ownMints = options.ownMints ?? new Set<string>();
   const handled = new Set<string>();
   const abort = new AbortController();
   const followUps: Promise<void>[] = []; // fee split / OTC listing work that outlives its loop
-  let busy = false;
-  let running: Promise<unknown> | null = null;
+  const running = new Set<Promise<void>>();
 
   const programId = PUMP_PROGRAM_ID.toBase58();
   // keep blockhash, program state and the launch wallet's balance warm so a
@@ -69,42 +81,45 @@ export function watchWallet(options: WatchOptions): WatchHandle {
         }
         if (!created || !created.user.equals(devWallet)) return;
         if (ownMints.has(created.mint.toBase58())) return;
+        if (abort.signal.aborted) return;
 
         log.info(
           `detected launch by ${short(devWallet)}: "${created.name}" ($${created.symbol}) ${describeParams(created)} → ${pumpUrl(created.mint)}`,
         );
-        if (busy || options.canStart?.() === false) {
-          log.warn("a relaunch loop is already running; ignoring this launch");
-          return;
-        }
-        options.onDetect?.(created, signature);
 
-        busy = true;
-        running = relaunchUntilBought(
+        // This loop's own abort, also fired when the watcher stops.
+        const loopAbort = new AbortController();
+        const forward = () => loopAbort.abort();
+        abort.signal.addEventListener("abort", forward, { once: true });
+        const hooks = options.onDetect?.(created, signature, loopAbort) || {};
+        const symbol = created.symbol;
+
+        const loop: Promise<void> = relaunchUntilBought(
           {
             connection,
             wallet,
             params: created,
             settings,
-            signal: abort.signal,
+            signal: loopAbort.signal,
             onMint: (mint) => ownMints.add(mint.toBase58()),
-            onLaunch: options.onLaunch,
-            onWindow: options.onWindow,
-            onLaunchUpdate: options.onLaunchUpdate,
+            onLaunch: hooks.onLaunch,
+            onWindow: hooks.onWindow,
+            onLaunchUpdate: hooks.onLaunchUpdate,
             followUps,
           },
           { index: 0, mint: created.mint, signature, at: Date.now(), uri: created.uri, notes: [] },
         )
-          .then((launches) => options.onLoopEnd?.(launches))
+          .then((launches) => hooks.onLoopEnd?.(launches))
           .catch((e: Error) => {
-            log.error(`relaunch loop failed: ${e.message}`);
-            options.onLoopError?.(e);
+            log.error(`$${symbol}: relaunch loop failed: ${e.message}`);
+            hooks.onLoopError?.(e);
           })
           .finally(() => {
-            busy = false;
-            running = null;
-            if (!abort.signal.aborted) log.info("back to watching");
+            abort.signal.removeEventListener("abort", forward);
+            running.delete(loop);
+            if (!abort.signal.aborted) log.info(`$${symbol}: run finished; still watching ${short(devWallet)}`);
           });
+        running.add(loop);
       } catch (e) {
         log.error(`handling ${signature} failed: ${(e as Error).message}`);
       }
@@ -123,7 +138,7 @@ export function watchWallet(options: WatchOptions): WatchHandle {
       abort.abort();
       chainCache(connection).stopRefreshing();
       await connection.removeOnLogsListener(subscription).catch(() => undefined);
-      await running?.catch(() => undefined);
+      await Promise.allSettled([...running]);
       await Promise.allSettled(followUps);
       log.info(`stopped watching ${short(devWallet)}`);
     },

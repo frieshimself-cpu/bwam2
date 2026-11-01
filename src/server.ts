@@ -18,7 +18,7 @@ import { relaunchUntilBought, type Launch, type WindowResult } from "./relaunch.
 import { makeConnection } from "./rpc.js";
 import { sellAll } from "./sell.js";
 import { loadWallet } from "./wallet.js";
-import { watchWallet, type WatchHandle } from "./watch.js";
+import { watchWallet, type RunHooks, type WatchHandle } from "./watch.js";
 
 interface LaunchJson {
   index: number;
@@ -66,7 +66,7 @@ interface PersistedState {
 const execFileAsync = promisify(execFile);
 
 const HISTORY_LIMIT = 50;
-const VERSION = "2026-11-01.4";
+const VERSION = "2026-11-01.5";
 const STATIC_TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
@@ -125,10 +125,12 @@ export async function startServer(initialSettings: RelaunchSettings): Promise<vo
   let settings = initialSettings;
   let devWallets: PublicKey[] = [];
   let history: RunRecord[] = [];
-  let current: RunRecord | null = null;
-  let watchers: WatchHandle[] = [];
-  let watchStopped = false; // set before stopping the watcher so its run is recorded as "stopped"
-  let manual: AbortController | null = null;
+  /** Runs in progress, by id: every detected (or manual) launch has its own, side by side. */
+  const active = new Map<string, { record: RunRecord; abort: AbortController }>();
+  /** One watcher per developer wallet, by address. */
+  const watchers = new Map<string, WatchHandle>();
+  /** Every mint this process launched, shared by all watchers so a copy is never copied again. */
+  const ownMints = new Set<string>();
   let balanceCache: { at: number; sol: number } | null = null;
   const sseClients = new Set<ServerResponse>();
 
@@ -163,7 +165,7 @@ export async function startServer(initialSettings: RelaunchSettings): Promise<vo
     await mkdir(srv.dataDir, { recursive: true });
     const state: PersistedState = {
       devWallets: devWallets.map((w) => w.toBase58()),
-      watching: watchers.length > 0,
+      watching: watchers.size > 0,
       settings,
       history,
     };
@@ -183,18 +185,22 @@ export async function startServer(initialSettings: RelaunchSettings): Promise<vo
   }
 
   async function stateJson() {
+    const running = [...active.values()].map((a) => a.record);
     return {
       rpc: { ok: !!connection, error: rpcError },
       launcher: launcher ? { address: launcher.publicKey.toBase58(), balanceSol: await launcherBalance() } : null,
       launcherError,
       devWallets: devWallets.map((w) => w.toBase58()),
-      watching: watchers.length > 0,
-      busy: !!current,
+      watching: watchers.size > 0,
+      busy: running.length > 0,
       updating,
       selling,
       version: VERSION,
       settings,
-      current,
+      /** Every run in progress, oldest first. */
+      active: running,
+      /** @deprecated the first run in progress, for dashboards from before parallel runs */
+      current: running[0] ?? null,
       history: [...history].reverse(),
       logs: recentLogs(200),
     };
@@ -208,9 +214,15 @@ export async function startServer(initialSettings: RelaunchSettings): Promise<vo
   onLog((entry) => broadcast("log", entry));
 
   // ---- runs ----------------------------------------------------------------
-  function beginRun(trigger: RunRecord["trigger"], params: LaunchParams, sourceMint: PublicKey | null, dev?: PublicKey): RunRecord {
-    current = {
-      id: `${Date.now().toString(36)}`,
+  function beginRun(
+    trigger: RunRecord["trigger"],
+    params: LaunchParams,
+    sourceMint: PublicKey | null,
+    abort: AbortController,
+    dev?: PublicKey,
+  ): RunRecord {
+    const record: RunRecord = {
+      id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
       startedAt: Date.now(),
       trigger,
       devWallet: dev?.toBase58(),
@@ -225,36 +237,46 @@ export async function startServer(initialSettings: RelaunchSettings): Promise<vo
       launches: [],
       windows: [],
     };
+    active.set(record.id, { record, abort });
     broadcastState();
-    return current;
+    return record;
   }
 
-  const onLaunch = (launch: Launch) => {
-    current?.launches.push(launchJson(launch));
-    broadcastState();
-  };
-  const onWindow = (launch: Launch, result: WindowResult) => {
-    current?.windows.push({ index: launch.index, buys: result.buys, buyers: result.buyers.size, solRaised: result.solRaised });
-    broadcastState();
-  };
+  /** Runs in progress and finished, newest last. */
+  const allRuns = () => [...history, ...[...active.values()].map((a) => a.record)];
+
   // A follow-up (fee split, OTC listing) can finish after its run has ended, so find the run by the mint.
   const onLaunchUpdate = (launch: Launch) => {
     const mint = launch.mint.toBase58();
-    const record = [current, ...history].find((r) => r?.launches.some((l) => l.mint === mint));
+    const record = allRuns().find((r) => r.launches.some((l) => l.mint === mint));
     if (!record) return;
     record.launches = record.launches.map((l) => (l.mint === mint ? launchJson(launch) : l));
     void persist();
     broadcastState();
   };
 
-  async function endRun(outcome: RunRecord["outcome"], error?: string) {
-    if (!current) return;
-    current.endedAt = Date.now();
-    current.outcome = outcome;
-    if (error) current.error = error;
-    history.push(current);
+  /** The callbacks that record one run's launches and watch windows. */
+  function runHooks(record: RunRecord): Required<Pick<RunHooks, "onLaunch" | "onWindow" | "onLaunchUpdate">> {
+    return {
+      onLaunch: (launch: Launch) => {
+        record.launches.push(launchJson(launch));
+        broadcastState();
+      },
+      onWindow: (launch: Launch, result: WindowResult) => {
+        record.windows.push({ index: launch.index, buys: result.buys, buyers: result.buyers.size, solRaised: result.solRaised });
+        broadcastState();
+      },
+      onLaunchUpdate,
+    };
+  }
+
+  async function endRun(record: RunRecord, outcome: RunRecord["outcome"], error?: string) {
+    if (!active.delete(record.id)) return;
+    record.endedAt = Date.now();
+    record.outcome = outcome;
+    if (error) record.error = error;
+    history.push(record);
     if (history.length > HISTORY_LIMIT) history = history.slice(-HISTORY_LIMIT);
-    current = null;
     balanceCache = null;
     await persist();
     broadcastState();
@@ -267,46 +289,56 @@ export async function startServer(initialSettings: RelaunchSettings): Promise<vo
     return aborted ? "stopped" : "exhausted";
   }
 
-  function startWatching() {
+  /**
+   * Makes the running watchers match `devWallets`: starts one for every wallet
+   * that has none and stops the ones for wallets no longer listed. Runs of the
+   * wallets that stay are not touched.
+   */
+  function syncWatchers() {
     if (!connection) throw new HttpError(400, `RPC not configured: ${rpcError}`);
     if (!launcher) throw new HttpError(400, `launch wallet not configured: ${launcherError}`);
     if (devWallets.length === 0) throw new HttpError(400, "add at least one wallet to copy first");
     const rpc = connection;
     const wallet = launcher;
-    watchStopped = false;
-    watchers = devWallets.map((dev) =>
-      watchWallet({
-        connection: rpc,
-        wallet,
-        devWallet: dev,
-        settings: () => settings,
-        canStart: () => !current,
-        onDetect: (call, signature) => {
-          const run = beginRun("watch", call, call.mint, dev);
-          // the original launch is launch #0 of the run
-          run.launches.push({ index: 0, mint: call.mint.toBase58(), url: pumpUrl(call.mint), signature, at: Date.now(), uri: call.uri, notes: [] });
-        },
-        onLaunch,
-        onWindow,
-        onLaunchUpdate,
-        onLoopEnd: () => void endRun(current ? outcomeOf(current, watchStopped) : undefined),
-        // a loop that fails (e.g. the wallet cannot cover a copy) must still end its run,
-        // or the next launches are ignored as "already running"
-        onLoopError: (err) => void endRun("error", err.message),
-      }),
-    );
+    const wanted = new Set(devWallets.map((d) => d.toBase58()));
+    for (const [address, watcher] of watchers) {
+      if (wanted.has(address)) continue;
+      watchers.delete(address);
+      void watcher.stop(); // ends that wallet's runs as "stopped"
+    }
+    for (const dev of devWallets) {
+      if (watchers.has(dev.toBase58())) continue;
+      watchers.set(
+        dev.toBase58(),
+        watchWallet({
+          connection: rpc,
+          wallet,
+          devWallet: dev,
+          settings: () => settings,
+          ownMints,
+          onDetect: (call, signature, abort) => {
+            const record = beginRun("watch", call, call.mint, abort, dev);
+            // the original launch is launch #0 of the run
+            record.launches.push({ index: 0, mint: call.mint.toBase58(), url: pumpUrl(call.mint), signature, at: Date.now(), uri: call.uri, notes: [] });
+            return {
+              ...runHooks(record),
+              onLoopEnd: () => void endRun(record, outcomeOf(record, abort.signal.aborted)),
+              // a loop that fails (e.g. the wallet cannot cover a copy) still ends its run
+              onLoopError: (err) => void endRun(record, "error", err.message),
+            };
+          },
+        }),
+      );
+    }
     void persist();
     broadcastState();
   }
 
   /** `forRestart` keeps the persisted watching flag so the next start resumes watching. */
   async function stopWatching(forRestart = false) {
-    const stopping = watchers;
-    watchers = [];
-    if (stopping.length) {
-      watchStopped = true;
-      await Promise.all(stopping.map((w) => w.stop())); // runs onLoopEnd for an in-progress run
-    }
+    const stopping = [...watchers.values()];
+    watchers.clear();
+    await Promise.all(stopping.map((w) => w.stop())); // ends their runs as "stopped"
     if (!forRestart) await persist();
     broadcastState();
   }
@@ -333,14 +365,14 @@ export async function startServer(initialSettings: RelaunchSettings): Promise<vo
     await writeFile(envFile, text);
     await chmod(envFile, 0o600).catch(() => undefined);
 
-    const wasWatching = watchers.length > 0;
+    const wasWatching = watchers.size > 0;
     if (wasWatching) await stopWatching();
     launcher = keypair;
     launcherError = "";
     balanceCache = null;
     if (connection) chainCache(connection).invalidateBalance(keypair.publicKey);
     log.info(`launch wallet set to ${keypair.publicKey.toBase58()} (its key is stored only in .env on this server)`);
-    if (wasWatching) startWatching();
+    if (wasWatching) syncWatchers();
     await persist();
   }
 
@@ -358,18 +390,20 @@ export async function startServer(initialSettings: RelaunchSettings): Promise<vo
         throw new HttpError(400, `not a valid Solana address: ${value}`);
       }
     }
-    const wasWatching = watchers.length > 0;
-    if (wasWatching) await stopWatching();
     devWallets = next;
+    log.info(next.length ? `wallets to copy (${next.length}): ${next.map((k) => k.toBase58()).join(", ")}` : "wallets to copy cleared");
+    // while watching, start / stop only the wallets that changed
+    if (watchers.size > 0) {
+      if (next.length) syncWatchers();
+      else await stopWatching();
+    }
     await persist();
-    log.info(next.length ? `wallets to copy: ${next.map((k) => k.toBase58()).join(", ")}` : "wallets to copy cleared");
-    if (wasWatching && next.length) startWatching();
   }
 
   /** Pulls the latest code, builds it and exits; systemd starts the new version. */
   async function selfUpdate() {
     if (updating) throw new HttpError(409, "an update is already running");
-    if (current) throw new HttpError(409, "a run is in progress; stop it first");
+    if (active.size) throw new HttpError(409, "copies are running; wait for them to finish or stop them first");
     updating = true;
     broadcastState();
     log.info("updating from GitHub…");
@@ -398,34 +432,32 @@ export async function startServer(initialSettings: RelaunchSettings): Promise<vo
   async function relaunchManual(mint: PublicKey) {
     if (!connection) throw new HttpError(400, `RPC not configured: ${rpcError}`);
     if (!launcher) throw new HttpError(400, `launch wallet not configured: ${launcherError}`);
-    if (current) throw new HttpError(409, "a run is already in progress");
     const params = await paramsFromMint(connection, mint);
-    const record = beginRun("manual", params, mint);
-    manual = new AbortController();
-    const signal = manual.signal;
-    void relaunchUntilBought({ connection, wallet: launcher, params, settings: () => settings, signal, onLaunch, onWindow, onLaunchUpdate })
-      .then(() => endRun(outcomeOf(record, signal.aborted)))
+    const abort = new AbortController();
+    const record = beginRun("manual", params, mint, abort);
+    void relaunchUntilBought({
+      connection,
+      wallet: launcher,
+      params,
+      settings: () => settings,
+      signal: abort.signal,
+      onMint: (m) => ownMints.add(m.toBase58()),
+      ...runHooks(record),
+    })
+      .then(() => endRun(record, outcomeOf(record, abort.signal.aborted)))
       .catch((err: Error) => {
         log.error(`relaunch failed: ${err.message}`);
-        return endRun("error", err.message);
-      })
-      .finally(() => {
-        manual = null;
+        return endRun(record, "error", err.message);
       });
   }
 
+  /** Stops every run in progress; watching goes on. */
   async function stopRun() {
-    if (manual) {
-      manual.abort();
-      return;
+    for (const { record, abort } of [...active.values()]) {
+      // already asked to stop before: its loop is gone without closing the record
+      if (abort.signal.aborted) await endRun(record, "stopped");
+      else abort.abort(); // the loop ends at its next step and closes the record
     }
-    if (watchers.length && current) {
-      // the watcher's loop shares its abort signal: restart the watchers to end the loop only
-      await stopWatching();
-      startWatching();
-    }
-    // a run whose loop is no longer running (it failed before the record was closed) is closed here
-    if (current) await endRun("stopped");
   }
 
   // ---- http ----------------------------------------------------------------
@@ -479,7 +511,7 @@ export async function startServer(initialSettings: RelaunchSettings): Promise<vo
         const body = await readJsonBody(req);
         const raw = typeof body.secretKey === "string" ? body.secretKey.trim() : "";
         if (!raw) throw new HttpError(400, "paste the wallet's private key");
-        if (current) throw new HttpError(409, "a run is in progress; wait for it to finish");
+        if (active.size) throw new HttpError(409, "copies are running; wait for them to finish");
         await importLaunchWallet(raw);
         return stateJson();
       }
@@ -503,7 +535,7 @@ export async function startServer(initialSettings: RelaunchSettings): Promise<vo
       case "POST /api/watch": {
         const body = await readJsonBody(req);
         if (body.on === false) await stopWatching();
-        else if (watchers.length === 0) startWatching();
+        else syncWatchers();
         return stateJson();
       }
       case "POST /api/relaunch": {
@@ -527,7 +559,7 @@ export async function startServer(initialSettings: RelaunchSettings): Promise<vo
         if (!launcher) throw new HttpError(400, `launch wallet not configured: ${launcherError}`);
         const body = await readJsonBody(req);
         const mint = String(body.mint ?? "").trim();
-        const record = [current, ...history].find((r) => r?.launches.some((l) => l.mint === mint && l.index > 0));
+        const record = allRuns().find((r) => r.launches.some((l) => l.mint === mint && l.index > 0));
         const entry = record?.launches.find((l) => l.mint === mint);
         if (!record || !entry) throw new HttpError(404, "no copy with that mint in the run history");
         const launch: Launch = { index: entry.index, mint: new PublicKey(entry.mint), signature: entry.signature, at: entry.at, uri: entry.uri, notes: [] };
@@ -551,7 +583,7 @@ export async function startServer(initialSettings: RelaunchSettings): Promise<vo
       case "POST /api/sell-all": {
         if (!connection) throw new HttpError(400, `RPC not configured: ${rpcError}`);
         if (!launcher) throw new HttpError(400, `launch wallet not configured: ${launcherError}`);
-        if (current) throw new HttpError(409, "a run is in progress; wait for it to finish");
+        if (active.size) throw new HttpError(409, "copies are running; wait for them to finish");
         if (selling) throw new HttpError(409, "already selling");
         selling = true;
         broadcastState();
@@ -604,7 +636,7 @@ export async function startServer(initialSettings: RelaunchSettings): Promise<vo
   if (devWallets.length) log.info(`wallets to copy: ${devWallets.map((w) => w.toBase58()).join(", ")}`);
   if (resumeWatching && devWallets.length && connection && launcher) {
     try {
-      startWatching();
+      syncWatchers();
     } catch (err) {
       log.warn(`could not resume watching: ${(err as Error).message}`);
     }

@@ -38,7 +38,7 @@ export interface FollowUpOptions {
 /** Runs the follow-up for one launched copy; never throws (everything is logged). */
 export async function followUpLaunch(options: FollowUpOptions): Promise<void> {
   const { launch, params, signal } = options;
-  const tag = `launch #${launch.index}`;
+  const tag = `$${params.symbol} copy #${launch.index}`;
   const note = (text: string) => {
     launch.notes.push(text);
     options.onUpdate?.(launch);
@@ -86,7 +86,7 @@ export async function followUpLaunch(options: FollowUpOptions): Promise<void> {
  */
 async function targetFeeSharing({ connection, params, launch, shared, signal }: FollowUpOptions): Promise<FeeSharing | null> {
   if (shared.feeSharing !== undefined) return shared.feeSharing;
-  const tag = `launch #${launch.index}`;
+  const tag = `$${params.symbol} copy #${launch.index}`;
 
   if (await shared.isOtc(params.uri)) {
     log.info(`${tag}: the original is an OTC launch; routing the copy's creator fees to OTC rewards`);
@@ -150,7 +150,7 @@ async function applyFeeSharing({ connection, wallet, params, launch, settings, s
       await simulateOrThrow(connection, tx, "fee split");
     } catch (err) {
       if (signal?.aborted || Date.now() >= deadline) throw err;
-      log.warn(`launch #${launch.index}: fee split simulation failed (attempt ${attempt}); the node may not have the coin yet, retrying`);
+      log.warn(`$${params.symbol} copy #${launch.index}: fee split simulation failed (attempt ${attempt}); the node may not have the coin yet, retrying`);
       await sleep(1000, signal);
       continue;
     }
@@ -160,7 +160,7 @@ async function applyFeeSharing({ connection, wallet, params, launch, settings, s
 
 /** Lists the copy on the OTC site with the original's reward setup. */
 async function registerOnOtc({ wallet, params, launch, shared, signal }: FollowUpOptions, note: (text: string) => void): Promise<void> {
-  const tag = `launch #${launch.index}`;
+  const tag = `$${params.symbol} copy #${launch.index}`;
   if (!params.sourceMint) return;
 
   if (shared.otcListing === undefined) {

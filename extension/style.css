@@ -18,6 +18,8 @@ h2 { font-size: 13px; margin: 0 0 10px; color: var(--muted); text-transform: upp
 main { padding: 14px 18px 28px; display: grid; gap: 14px; max-width: 980px; margin: 0 auto; }
 body:not(.popup) main { grid-template-columns: 1fr 1fr; }
 .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+/* layout rules below set display, which would otherwise override the hidden attribute */
+[hidden] { display: none !important; }
 .row { display: flex; gap: 8px; align-items: center; margin: 8px 0; flex-wrap: wrap; }
 input { flex: 1; min-width: 0; background: #0b0d11; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; font: inherit; }
 input[type="number"] { width: 110px; flex: 0 0 auto; }

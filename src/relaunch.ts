@@ -59,7 +59,7 @@ export async function watchWindow(ctx: RelaunchContext, launch: Launch): Promise
   const buyers = new Set<string>();
   let buys = 0;
 
-  log.info(`watching launch #${launch.index} for ${settings.intervalSec}s — ${pumpUrl(launch.mint)}`);
+  log.info(`$${ctx.params.symbol}: watching launch #${launch.index} for ${settings.intervalSec}s — ${pumpUrl(launch.mint)}`);
 
   for (;;) {
     try {
@@ -73,7 +73,7 @@ export async function watchWindow(ctx: RelaunchContext, launch: Launch): Promise
       for (const buy of fresh) {
         buys += 1;
         buyers.add(buy.user.toBase58());
-        log.info(`  buy #${buys}: ${buy.sol.toFixed(4)} SOL from ${short(buy.user)}`);
+        log.info(`  $${ctx.params.symbol} buy #${buys}: ${buy.sol.toFixed(4)} SOL from ${short(buy.user)}`);
       }
     } catch (err) {
       log.warn(`poll failed, will retry: ${(err as Error).message}`);
@@ -152,7 +152,7 @@ export async function relaunchUntilBought(ctx: RelaunchContext, first?: Launch):
     if (initial.instantCopy && initial.maxRelaunches > 0) {
       // Fire the first copy the moment the launch is seen; the window logic
       // below then applies to the copy, not to the original.
-      log.info("instant copy: launching now");
+      log.info(`$${params.symbol}: instant copy, launching now`);
       const next = await launchNext();
       if (!next) return launches; // dry run
       current = next;
@@ -169,28 +169,28 @@ export async function relaunchUntilBought(ctx: RelaunchContext, first?: Launch):
 
     if (settings.stopOnBuys > 0 && result.buys >= settings.stopOnBuys) {
       log.info(
-        `launch #${current.index} got ${result.buys} outside buy(s) from ${result.buyers.size} wallet(s), ` +
+        `$${params.symbol}: launch #${current.index} got ${result.buys} outside buy(s) from ${result.buyers.size} wallet(s), ` +
           `${result.solRaised.toFixed(4)} SOL on the curve — stopping here: ${pumpUrl(current.mint)}`,
       );
       return launches;
     }
-    log.info(`launch #${current.index}: ${result.buys} outside buy(s) in the window`);
+    log.info(`$${params.symbol}: launch #${current.index}: ${result.buys} outside buy(s) in the window`);
 
     if (signal?.aborted) {
-      log.info("stopped");
+      log.info(`$${params.symbol}: stopped`);
       break;
     }
     if (relaunch >= settings.maxRelaunches) {
-      log.info(`relaunch limit (${settings.maxRelaunches}) reached`);
+      log.info(`$${params.symbol}: relaunch limit (${settings.maxRelaunches}) reached`);
       break;
     }
-    log.info(`relaunching (${relaunch + 1}/${settings.maxRelaunches})…`);
+    log.info(`$${params.symbol}: relaunching (${relaunch + 1}/${settings.maxRelaunches})…`);
     const next = await launchNext();
     if (!next) break; // dry run
     current = next;
   }
 
-  log.info("summary:");
+  log.info(`$${params.symbol}: summary:`);
   for (const l of launches) log.info(`  #${l.index} ${pumpUrl(l.mint)}`);
   return launches;
 }
