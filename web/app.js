@@ -147,8 +147,13 @@ function initDashboard({ apiBase, token, onUnauthorized }) {
     const problems = [];
     if (!state.rpc.ok) problems.push(state.rpc.error);
     if (!state.launcher) problems.push(state.launcherError);
-    if (state.launcher && state.launcher.balanceSol !== null && state.launcher.balanceSol < 0.03) {
-      problems.push(`launch wallet is low (${fmtSol(state.launcher.balanceSol)}); each copy costs about 0.03 SOL plus the dev buy`);
+    if (state.launcher && state.launcher.balanceSol !== null) {
+      // what the backend requires before it sends one copy (create cost + dev buy + tip + a margin)
+      const s = state.settings;
+      const need = 0.03 + Number(s.devBuySol || 0) * 1.05 + (s.jitoUrl ? Number(s.jitoTipSol || 0) : 0);
+      if (state.launcher.balanceSol < need) {
+        problems.push(`launch wallet has ${fmtSol(state.launcher.balanceSol)} but a copy needs about ${need.toFixed(4)} SOL at these settings — launches are skipped until you top it up or lower the dev buy`);
+      }
     }
     notice.hidden = problems.length === 0;
     notice.textContent = problems.join(" · ");
