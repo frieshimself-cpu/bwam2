@@ -1,6 +1,8 @@
 import { Connection, Keypair, PublicKey } from "@solana/web3.js";
 import type { RelaunchSettings } from "./config.js";
+import { followUpLaunch } from "./followup.js";
 import { log, short, sleep } from "./log.js";
+import { LaunchShared } from "./otc.js";
 import {
   ESTIMATED_CREATE_COST_SOL,
   curveStats,
@@ -16,6 +18,10 @@ export interface Launch {
   mint: PublicKey;
   signature: string;
   at: number;
+  /** The metadata URI the coin carries. */
+  uri: string;
+  /** What the follow-up did after the create: fee split / OTC routing set, OTC listing. */
+  notes: string[];
 }
 
 export interface WindowResult {
@@ -38,6 +44,10 @@ export interface RelaunchContext {
   onLaunch?: (launch: Launch) => void;
   /** Called when a launch's watch window ends. */
   onWindow?: (launch: Launch, result: WindowResult) => void;
+  /** Called when a launch's follow-up (fee split, OTC listing) adds a note. */
+  onLaunchUpdate?: (launch: Launch) => void;
+  /** Collects the follow-ups started by this loop, so a caller can wait for them after stopping. */
+  followUps?: Promise<void>[];
 }
 
 /** Watches one launch for `intervalSec`, returning early once `stopOnBuys` external buys land. */
@@ -104,19 +114,35 @@ export async function relaunchUntilBought(ctx: RelaunchContext, first?: Launch):
       (initial.dryRun ? " [DRY RUN]" : ""),
   );
 
+  // What the launches of this loop learn about the original (its fee split,
+  // its OTC listing, its metadata) is shared, so only the first one looks.
+  const shared = new LaunchShared(params.feeSharing);
+
   const launchNext = async (): Promise<Launch | null> => {
     const result = await launchCoin({
       connection: ctx.connection,
       wallet: ctx.wallet,
-      // after the first copy, look the original's fee split up again: it may have been set up since
-      params: launches.length > 1 && params.sourceMint ? { ...params, feeSharing: undefined } : params,
+      params,
       settings: ctx.settings(),
+      shared,
       onMint: ctx.onMint,
     });
     if (!result) return null;
-    const launch: Launch = { index: launches.length, mint: result.mint, signature: result.signature, at: Date.now() };
+    const launch: Launch = { index: launches.length, mint: result.mint, signature: result.signature, at: Date.now(), uri: result.uri, notes: [] };
     launches.push(launch);
     ctx.onLaunch?.(launch);
+    // The fee split / OTC routing and listing go on after the create, without holding the loop up.
+    const followUp = followUpLaunch({
+      connection: ctx.connection,
+      wallet: ctx.wallet,
+      params,
+      launch,
+      shared,
+      settings: ctx.settings,
+      signal,
+      onUpdate: ctx.onLaunchUpdate,
+    });
+    ctx.followUps?.push(followUp);
     return launch;
   };
 

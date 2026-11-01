@@ -59,6 +59,7 @@ function initDashboard({ apiBase, token, onUnauthorized }) {
       } else if (live) {
         li.append(el("span", { class: "result", text: "watching…" }));
       }
+      if (launch.notes && launch.notes.length) li.append(el("span", { class: "result", text: launch.notes.join(" · ") }));
       list.append(li);
     }
     wrap.append(list);

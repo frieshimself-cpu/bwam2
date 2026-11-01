@@ -147,12 +147,15 @@ Set `HOST=0.0.0.0`, set an `API_TOKEN`, and put it behind HTTPS (Caddy, nginx). 
 | creator fee bps ("tax") | same (while pump.fun has per-coin fees enabled) |
 | holder-reward flag | same (while enabled on pump.fun) |
 | mayhem mode | same |
-| creator fee recipient | the original creator wallet receives the copy's creator fees too |
+| creator fee recipient | the launch wallet is the copy's creator; with a fee split or OTC routing the fees go wherever the original's go |
 | fee split (up to 10 recipients) | recreated on the copy with the same recipients and percentages |
 | donations (donate.gg) | a new donation escrow for the copy, same donate.gg config |
+| OTC launcher coins (otcdesks.cash: holders paid in tokenised stocks) | the copy's creator fees are routed to OTC rewards, the copy is listed on the OTC site with the same stock or basket, and its metadata is re-pinned so the website link is the copy's own OTC page |
 | cashback flag | pump.fun no longer allows cashback on new coins; dropped with a warning |
 
-The fee split / donation setup is read from the original coin again right before every launch, since pump.fun's site sets it up a moment after the create.
+pump.fun's site and the OTC launcher write the fee split in a second transaction right after the create, so a copy made the instant a launch is seen cannot carry it yet. Every copy therefore gets a **follow-up** once its create has landed: the original is watched for its fee split (up to 90 s) and the same split — or, for an OTC launch, 100 % to the OTC reward wallet — is put on the copy in a transaction of its own, signed by the launch wallet as the copy's creator. An OTC copy is then registered on otcdesks.cash with the original's reward setup (single stock or rotating basket, read from the site's API). What the follow-up did shows up next to each launch in the dashboard.
+
+An OTC launch is recognised before the create from its metadata (the OTC launcher links every coin to its own page on the site), which is also when the copy's metadata is re-pinned through the site's own pinning endpoint with the website pointing at the copy's page. That costs about a second; `OTC_OWN_PAGE=false` (Advanced → "OTC launches: own OTC page link") skips it and keeps the original's metadata link.
 
 A dev buy (`DEV_BUY_SOL`) on a SOL-quoted coin is a plain first buy. On a coin paired with a pump.fun coin (one with its own bonding curve or PumpSwap pool, e.g. OTC), the SOL is routed through that coin in the same transaction, as pump.fun's site does. When the quote asset has no pump.fun venue for the SOL leg (tokenized stocks, pre-IPO tokens), the copy is created and the dev buy is skipped with a note in the log.
 
@@ -180,6 +183,7 @@ Buys are counted from the bonding curve's `TradeEvent`s, excluding the launch wa
 | `JITO_URL` | `--jito` | off | send through a Jito block engine (with a tip) instead of the RPC |
 | `JITO_TIP_SOL` | `--jito-tip` | 0.001 | Jito tip per launch |
 | `DRY_RUN` | `--dry-run` | false | build and simulate the create, send nothing |
+| `OTC_OWN_PAGE` | — | true | OTC launches: re-pin the metadata so the copy's website link is its own OTC page (about 1 s slower) |
 
 All of these are editable live in the dashboard; changes apply to the next launch or window.
 

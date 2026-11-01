@@ -24,6 +24,9 @@ interface LaunchJson {
   url: string;
   signature: string;
   at: number;
+  uri: string;
+  /** Follow-up results: fee split / OTC routing, OTC listing. */
+  notes: string[];
 }
 
 interface WindowJson {
@@ -61,7 +64,7 @@ interface PersistedState {
 const execFileAsync = promisify(execFile);
 
 const HISTORY_LIMIT = 50;
-const VERSION = "2026-10-31.10";
+const VERSION = "2026-11-01.1";
 const STATIC_TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
@@ -80,7 +83,15 @@ class HttpError extends Error {
 }
 
 function launchJson(launch: Launch): LaunchJson {
-  return { index: launch.index, mint: launch.mint.toBase58(), url: pumpUrl(launch.mint), signature: launch.signature, at: launch.at };
+  return {
+    index: launch.index,
+    mint: launch.mint.toBase58(),
+    url: pumpUrl(launch.mint),
+    signature: launch.signature,
+    at: launch.at,
+    uri: launch.uri,
+    notes: [...launch.notes],
+  };
 }
 
 async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknown>> {
@@ -224,6 +235,15 @@ export async function startServer(initialSettings: RelaunchSettings): Promise<vo
     current?.windows.push({ index: launch.index, buys: result.buys, buyers: result.buyers.size, solRaised: result.solRaised });
     broadcastState();
   };
+  // A follow-up (fee split, OTC listing) can finish after its run has ended, so find the run by the mint.
+  const onLaunchUpdate = (launch: Launch) => {
+    const mint = launch.mint.toBase58();
+    const record = [current, ...history].find((r) => r?.launches.some((l) => l.mint === mint));
+    if (!record) return;
+    record.launches = record.launches.map((l) => (l.mint === mint ? launchJson(launch) : l));
+    void persist();
+    broadcastState();
+  };
 
   async function endRun(outcome: RunRecord["outcome"], error?: string) {
     if (!current) return;
@@ -262,10 +282,11 @@ export async function startServer(initialSettings: RelaunchSettings): Promise<vo
         onDetect: (call, signature) => {
           const run = beginRun("watch", call, call.mint, dev);
           // the original launch is launch #0 of the run
-          run.launches.push({ index: 0, mint: call.mint.toBase58(), url: pumpUrl(call.mint), signature, at: Date.now() });
+          run.launches.push({ index: 0, mint: call.mint.toBase58(), url: pumpUrl(call.mint), signature, at: Date.now(), uri: call.uri, notes: [] });
         },
         onLaunch,
         onWindow,
+        onLaunchUpdate,
         onLoopEnd: () => void endRun(current ? outcomeOf(current, watchStopped) : undefined),
       }),
     );
@@ -377,7 +398,7 @@ export async function startServer(initialSettings: RelaunchSettings): Promise<vo
     const record = beginRun("manual", params, mint);
     manual = new AbortController();
     const signal = manual.signal;
-    void relaunchUntilBought({ connection, wallet: launcher, params, settings: () => settings, signal, onLaunch, onWindow })
+    void relaunchUntilBought({ connection, wallet: launcher, params, settings: () => settings, signal, onLaunch, onWindow, onLaunchUpdate })
       .then(() => endRun(outcomeOf(record, signal.aborted)))
       .catch((err: Error) => {
         log.error(`relaunch failed: ${err.message}`);

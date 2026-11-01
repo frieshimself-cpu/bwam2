@@ -23,6 +23,8 @@ export interface RelaunchSettings {
   jitoUrl: string;
   /** Tip in SOL added to the transaction when sending through Jito. */
   jitoTipSol: number;
+  /** OTC launches: re-pin the metadata so the copy's website link is its own OTC page (about a second slower). */
+  otcOwnPage: boolean;
 }
 
 // Same block engine Velo uses; Frankfurt is a few ms from a German VPS.
@@ -56,6 +58,7 @@ export function settingsFromEnv(): RelaunchSettings {
     dryRun: bool("DRY_RUN", false),
     jitoUrl: process.env.JITO_URL?.trim() ?? "",
     jitoTipSol: num("JITO_TIP_SOL", 0.001),
+    otcOwnPage: bool("OTC_OWN_PAGE", true),
   };
 }
 
@@ -91,6 +94,7 @@ export function mergeSettings(base: RelaunchSettings, patch: unknown): RelaunchS
     dryRun: boolean("dryRun", base.dryRun),
     jitoUrl: text("jitoUrl", base.jitoUrl),
     jitoTipSol: numeric("jitoTipSol", base.jitoTipSol),
+    otcOwnPage: boolean("otcOwnPage", base.otcOwnPage),
   };
 }
 

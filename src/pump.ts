@@ -32,7 +32,8 @@ import BN from "bn.js";
 import bs58 from "bs58";
 import { chainCache } from "./cache.js";
 import type { RelaunchSettings } from "./config.js";
-import { describeFeeSharing, feeSharingInstructions, fetchFeeSharing, type FeeSharing } from "./fees.js";
+import { describeFeeSharing, type FeeSharing } from "./fees.js";
+import { LaunchShared, describeOtc, isOtcSharing, pinMetadataForOtc, type OtcListing } from "./otc.js";
 import { getParsedTxs } from "./rpc.js";
 import { log, short } from "./log.js";
 
@@ -49,12 +50,14 @@ export interface LaunchParams {
   holderReward: boolean;
   /** The coin/stock the curve is quoted in; null = SOL. */
   quoteMint: string | null;
-  /** The original creator wallet (receives the creator fee); null when it was a program account. */
+  /** The original creator wallet; null when it was a program account. Informational: a copy's creator is the launch wallet. */
   creator?: string | null;
-  /** The coin these parameters were read from; its fee-sharing config is re-read at every launch. */
+  /** The coin these parameters were read from; its fee split is looked up after each copy's create. */
   sourceMint?: string | null;
   /** Fee split / donation setup to recreate; undefined = not looked up yet, null = none. */
   feeSharing?: FeeSharing | null;
+  /** The original's OTC listing (which stock(s) its holders are paid in), when known. */
+  otcListing?: OtcListing | null;
 }
 
 export interface CreateCall extends LaunchParams {
@@ -67,6 +70,8 @@ export interface LaunchResult {
   mint: PublicKey;
   bondingCurve: PublicKey;
   signature: string;
+  /** The metadata URI the copy was created with (re-pinned for an OTC launch). */
+  uri: string;
 }
 
 /** Rough on-chain cost of one create (rent for mint + curve + mayhem accounts, plus fees). */
@@ -120,8 +125,8 @@ export function describeParams(p: LaunchParams): string {
   if (p.cashback) parts.push("cashback");
   if (p.holderReward) parts.push("holder rewards");
   if (p.mayhemMode) parts.push("mayhem mode");
-  if (p.feeSharing) parts.push(describeFeeSharing(p.feeSharing));
-  else if (p.creator) parts.push(`fees → ${short(p.creator)}`);
+  if (p.otcListing || isOtcSharing(p.feeSharing)) parts.push(describeOtc(p.otcListing));
+  else if (p.feeSharing) parts.push(describeFeeSharing(p.feeSharing));
   return parts.join(", ");
 }
 
@@ -234,9 +239,8 @@ export function createCallFromLogs(logs: string[]): CreateCall | null {
         quoteMint: isSolQuote(ev.quoteMint) ? null : ev.quoteMint.toBase58(),
         creator: PublicKey.isOnCurve(ev.creator.toBytes()) ? ev.creator.toBase58() : null,
         sourceMint: ev.mint.toBase58(),
-        // pump.fun's site sets a fee split up in the create transaction itself:
-        // when that instruction is absent there is nothing to look up (yet)
-        feeSharing: logs.some((l) => l.includes("Instruction: CreateFeeSharingConfig")) ? undefined : null,
+        // the fee split (pump.fun's site, the OTC launcher) goes on in a
+        // second transaction right after this one: looked up after the copy
       };
     } catch (err) {
       log.warn(`could not decode CreateEvent from logs: ${(err as Error).message}`);
@@ -379,11 +383,14 @@ export async function prepareLaunch({
   payer,
   params,
   settings,
+  mintKeypair = Keypair.generate(),
 }: {
   connection: Connection;
   payer: PublicKey;
   params: LaunchParams;
   settings: LaunchSettings;
+  /** The new coin's keypair, when the caller needed its address beforehand (e.g. in the metadata). */
+  mintKeypair?: Keypair;
 }): Promise<PreparedLaunch> {
   const online = new OnlinePumpSdk(connection);
   const cache = chainCache(connection);
@@ -412,14 +419,11 @@ export async function prepareLaunch({
     };
   }
 
-  // A fee split needs the creator to sign its setup, so the launch wallet is
-  // the creator then and the split sends fees on; otherwise the original
-  // creator wallet receives the fee exactly as before.
-  const sharing = params.feeSharing && !holderReward ? params.feeSharing : null;
-  if (params.feeSharing && holderReward) log.warn("holder-reward coin also had a fee split; keeping holder rewards");
-  const creator = sharing ? payer : params.creator ? new PublicKey(params.creator) : payer;
+  // The launch wallet is the copy's creator: it signs the fee split (or the
+  // OTC reward routing) that goes on right after the create, and collects the
+  // creator fee itself when the original has none.
+  const creator = payer;
 
-  const mintKeypair = Keypair.generate();
   const common = {
     mint: mintKeypair.publicKey,
     name: params.name,
@@ -477,19 +481,6 @@ export async function prepareLaunch({
     });
     instructions.push(...(await PUMP_SDK.createV2AndBuyInstructions({ ...common, global, amount, solAmount: devBuyLamports })));
     computeUnitLimit = 400_000;
-  }
-
-  if (sharing) {
-    instructions.push(
-      ...(await feeSharingInstructions({
-        creator: payer,
-        mint: mintKeypair.publicKey,
-        quoteMint: quote?.quoteMint,
-        quoteTokenProgram: quote?.quoteTokenProgram,
-        sharing,
-      })),
-    );
-    computeUnitLimit = 600_000;
   }
 
   const tipLamports = Math.round(settings.jitoTipSol * LAMPORTS_PER_SOL);
@@ -668,29 +659,40 @@ export async function launchCoin({
   wallet,
   params,
   settings,
+  shared,
   onMint,
 }: {
   connection: Connection;
   wallet: Keypair;
   params: LaunchParams;
   settings: RelaunchSettings;
+  /** What is known about the original (metadata, OTC); lets an OTC copy get its own OTC page link. */
+  shared?: LaunchShared;
   /** Called with the new mint before the transaction is sent. */
   onMint?: (mint: PublicKey) => void;
 }): Promise<LaunchResult | null> {
   await assertBalance(connection, wallet.publicKey, settings);
 
-  // The original's fee split may be set up after its create; look it up unless
-  // the caller already knows there is none (the relaunch loop asks again later).
-  if (params.sourceMint && params.feeSharing === undefined) {
-    params = { ...params, feeSharing: await fetchFeeSharing(connection, new PublicKey(params.sourceMint)) };
+  const mintKeypair = Keypair.generate();
+  const mint = mintKeypair.publicKey;
+  let uri = params.uri;
+  // An OTC coin's metadata links to its own page on the OTC site. The copy's
+  // should link to the copy's page, which means pinning metadata of its own
+  // before the create; when that fails or takes too long, the original's is used.
+  if (shared && params.sourceMint && settings.otcOwnPage && (await shared.isOtc(params.uri))) {
+    const meta = await shared.metadata(params.uri);
+    const pinned = meta && (await pinMetadataForOtc(meta, mint));
+    if (pinned) {
+      uri = pinned;
+      log.info("OTC launch: metadata re-pinned so the copy's website link is its own OTC page");
+    }
   }
 
   const cache = chainCache(connection);
-  const [{ mintKeypair, instructions, computeUnitLimit }, { blockhash, lastValidBlockHeight }] = await Promise.all([
-    prepareLaunch({ connection, payer: wallet.publicKey, params, settings }),
+  const [{ instructions, computeUnitLimit }, { blockhash, lastValidBlockHeight }] = await Promise.all([
+    prepareLaunch({ connection, payer: wallet.publicKey, params: { ...params, uri }, settings, mintKeypair }),
     cache.getBlockhash(),
   ]);
-  const mint = mintKeypair.publicKey;
   onMint?.(mint);
   const tx = buildLaunchTransaction({
     payer: wallet.publicKey,
@@ -718,7 +720,7 @@ export async function launchCoin({
   cache.invalidateBalance(wallet.publicKey);
 
   log.info(`live: ${pumpUrl(mint)}`);
-  return { mint, bondingCurve: bondingCurvePda(mint), signature };
+  return { mint, bondingCurve: bondingCurvePda(mint), signature, uri };
 }
 
 /** Sends a signed transaction (RPC, or Jito when `jitoUrl` is set) and waits for confirmation. */

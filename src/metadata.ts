@@ -4,6 +4,7 @@ import { Connection, PublicKey } from "@solana/web3.js";
 import { TOKEN_2022_PROGRAM_ID, getTokenMetadata } from "@solana/spl-token";
 import { OnlinePumpSdk, bondingCurvePda } from "@pump-fun/pump-sdk";
 import { fetchFeeSharing } from "./fees.js";
+import { fetchOtcListing, isOtcSharing } from "./otc.js";
 import { createCallIn, type LaunchParams } from "./pump.js";
 import { getParsedTxs } from "./rpc.js";
 import { log } from "./log.js";
@@ -142,6 +143,7 @@ async function createCallFromHistory(connection: Connection, mint: PublicKey): P
  */
 export async function paramsFromMint(connection: Connection, mint: PublicKey): Promise<LaunchParams> {
   const curve = await new OnlinePumpSdk(connection).fetchBondingCurve(mint);
+  const feeSharing = await fetchFeeSharing(connection, mint);
   const flags = {
     mayhemMode: curve.isMayhemMode,
     cashback: curve.isCashbackCoin,
@@ -150,7 +152,9 @@ export async function paramsFromMint(connection: Connection, mint: PublicKey): P
     quoteMint: curve.quoteMint.equals(PublicKey.default) ? null : curve.quoteMint.toBase58(),
     creator: PublicKey.isOnCurve(curve.creator.toBytes()) ? curve.creator.toBase58() : null,
     sourceMint: mint.toBase58(),
-    feeSharing: await fetchFeeSharing(connection, mint),
+    feeSharing,
+    // an OTC coin's reward setup lives on the OTC site, not on chain
+    otcListing: isOtcSharing(feeSharing) ? await fetchOtcListing(mint).catch(() => null) : undefined,
   };
 
   // create_v2 coins are Token-2022 mints carrying their metadata on the mint itself.

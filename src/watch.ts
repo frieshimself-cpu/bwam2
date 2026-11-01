@@ -27,6 +27,7 @@ export interface WatchOptions {
   onDetect?: (call: CreateCall, signature: string) => void;
   onLaunch?: (launch: Launch) => void;
   onWindow?: (launch: Launch, result: WindowResult) => void;
+  onLaunchUpdate?: (launch: Launch) => void;
   onLoopEnd?: (launches: Launch[]) => void;
 }
 
@@ -40,6 +41,7 @@ export function watchWallet(options: WatchOptions): WatchHandle {
   const ownMints = new Set<string>(); // coins this bot launched: never relaunch a relaunch
   const handled = new Set<string>();
   const abort = new AbortController();
+  const followUps: Promise<void>[] = []; // fee split / OTC listing work that outlives its loop
   let busy = false;
   let running: Promise<unknown> | null = null;
 
@@ -86,8 +88,10 @@ export function watchWallet(options: WatchOptions): WatchHandle {
             onMint: (mint) => ownMints.add(mint.toBase58()),
             onLaunch: options.onLaunch,
             onWindow: options.onWindow,
+            onLaunchUpdate: options.onLaunchUpdate,
+            followUps,
           },
-          { index: 0, mint: created.mint, signature, at: Date.now() },
+          { index: 0, mint: created.mint, signature, at: Date.now(), uri: created.uri, notes: [] },
         )
           .then((launches) => options.onLoopEnd?.(launches))
           .catch((e: Error) => log.error(`relaunch loop failed: ${e.message}`))
@@ -115,6 +119,7 @@ export function watchWallet(options: WatchOptions): WatchHandle {
       chainCache(connection).stopRefreshing();
       await connection.removeOnLogsListener(subscription).catch(() => undefined);
       await running?.catch(() => undefined);
+      await Promise.allSettled(followUps);
       log.info(`stopped watching ${short(devWallet)}`);
     },
   };
