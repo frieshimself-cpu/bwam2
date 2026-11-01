@@ -19,6 +19,7 @@ import { makeConnection } from "./rpc.js";
 import { sellAll } from "./sell.js";
 import { loadWallet } from "./wallet.js";
 import { watchWallet, type RunHooks, type WatchHandle } from "./watch.js";
+import { withdrawSol } from "./withdraw.js";
 
 interface LaunchJson {
   index: number;
@@ -66,7 +67,7 @@ interface PersistedState {
 const execFileAsync = promisify(execFile);
 
 const HISTORY_LIMIT = 50;
-const VERSION = "2026-11-01.5";
+const VERSION = "2026-11-01.6";
 const STATIC_TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
@@ -359,6 +360,20 @@ export async function startServer(initialSettings: RelaunchSettings): Promise<vo
     } catch {
       // no .env yet
     }
+    // The key being replaced is kept as a backup line, so the SOL and coins in
+    // the previous deploy wallet are never stranded (the server may have
+    // generated that wallet, in which case this file is the only copy of its key).
+    const previous = /^WALLET_PRIVATE_KEY=(.*)$/m.exec(text)?.[1]?.trim();
+    let previousAddress = "";
+    if (previous && previous !== raw.replace(/\s+/g, "")) {
+      try {
+        previousAddress = loadWallet(previous).publicKey.toBase58();
+      } catch {
+        previousAddress = "unreadable";
+      }
+      const stamp = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 12);
+      text += `${text.endsWith("\n") ? "" : "\n"}# replaced ${new Date().toISOString()}: deploy wallet ${previousAddress}\nWALLET_PRIVATE_KEY_PREVIOUS_${stamp}=${previous}\n`;
+    }
     text = /^WALLET_PRIVATE_KEY=.*$/m.test(text)
       ? text.replace(/^WALLET_PRIVATE_KEY=.*$/m, line)
       : text + (text === "" || text.endsWith("\n") ? "" : "\n") + line + "\n";
@@ -372,6 +387,7 @@ export async function startServer(initialSettings: RelaunchSettings): Promise<vo
     balanceCache = null;
     if (connection) chainCache(connection).invalidateBalance(keypair.publicKey);
     log.info(`launch wallet set to ${keypair.publicKey.toBase58()} (its key is stored only in .env on this server)`);
+    if (previousAddress) log.info(`the previous deploy wallet ${previousAddress}'s key is kept as a backup in .env`);
     if (wasWatching) syncWatchers();
     await persist();
   }
@@ -575,6 +591,39 @@ export async function startServer(initialSettings: RelaunchSettings): Promise<vo
           onUpdate: onLaunchUpdate,
         });
         return stateJson();
+      }
+      case "POST /api/reset": {
+        // Hand the server to someone else: stop watching, forget the wallets to copy and the run history.
+        if (active.size) throw new HttpError(409, "copies are running; wait for them to finish");
+        await stopWatching();
+        devWallets = [];
+        history = [];
+        await persist();
+        log.info("reset: wallets to copy and run history cleared");
+        return stateJson();
+      }
+      case "POST /api/withdraw": {
+        if (!connection) throw new HttpError(400, `RPC not configured: ${rpcError}`);
+        if (!launcher) throw new HttpError(400, `launch wallet not configured: ${launcherError}`);
+        if (active.size) throw new HttpError(409, "copies are running; wait for them to finish");
+        const body = await readJsonBody(req);
+        let to: PublicKey;
+        try {
+          to = new PublicKey(String(body.to ?? "").trim());
+        } catch {
+          throw new HttpError(400, "not a valid Solana address");
+        }
+        const rawAmount = body.amountSol;
+        const amountSol = rawAmount === undefined || rawAmount === null || rawAmount === "" || rawAmount === "all" ? undefined : Number(rawAmount);
+        if (amountSol !== undefined && !(amountSol > 0)) throw new HttpError(400, "amount must be a number above 0, or empty for everything");
+        try {
+          const result = await withdrawSol({ connection, wallet: launcher, to, amountSol, dryRun: settings.dryRun });
+          balanceCache = null;
+          chainCache(connection).invalidateBalance(launcher.publicKey);
+          return { ...(await stateJson()), withdraw: result };
+        } catch (err) {
+          throw new HttpError(400, (err as Error).message);
+        }
       }
       case "POST /api/update": {
         await selfUpdate();

@@ -143,6 +143,7 @@ function initDashboard({ apiBase, token, onUnauthorized }) {
     const sellBtn = $("sell-all");
     sellBtn.disabled = !!state.selling || !!state.busy || !state.launcher || !state.rpc.ok;
     sellBtn.textContent = state.selling ? "Selling…" : "Sell held coins → SOL";
+    $("withdraw").disabled = !!state.busy || !state.launcher || !state.rpc.ok;
 
     const notice = $("notice");
     const problems = [];
@@ -304,6 +305,21 @@ function initDashboard({ apiBase, token, onUnauthorized }) {
         render(next);
         const r = next.sell;
         if (r) appendLog({ ts: Date.now(), level: "info", msg: `sell: ${r.results.map((x) => `${x.mint.slice(0, 6)} ${x.error ? "error: " + x.error : x.skipped ? "skipped: " + x.skipped : (x.solOut ?? 0).toFixed(4) + " SOL"}`).join(" | ") || "nothing held"}; balance ${r.balanceBefore.toFixed(4)} → ${r.balanceAfter.toFixed(4)} SOL` });
+      })
+      .catch(fail);
+  });
+  $("withdraw").addEventListener("click", () => {
+    const testing = state && state.settings.dryRun;
+    const to = (window.prompt("Send SOL from the deploy wallet to which address? (e.g. your Phantom wallet)") || "").trim();
+    if (!to) return;
+    const amount = (window.prompt("How much SOL? Leave empty to send everything.") || "").trim();
+    const what = amount ? `${amount} SOL` : "ALL the SOL";
+    if (!window.confirm(`${testing ? "Simulate sending" : "Send"} ${what} from the deploy wallet to\n${to}?${testing ? "\n\n(Test mode is on: nothing is sent.)" : "\n\nThis is a real transfer and cannot be undone."}`)) return;
+    api("/api/withdraw", { to, amountSol: amount || "all" })
+      .then((next) => {
+        render(next);
+        const w = next.withdraw;
+        if (w) appendLog({ ts: Date.now(), level: "info", msg: `${w.simulated ? "simulated: " : ""}sent ${w.sol.toFixed(6)} SOL to ${w.to}${w.signature ? ` — https://solscan.io/tx/${w.signature}` : ""}` });
       })
       .catch(fail);
   });
