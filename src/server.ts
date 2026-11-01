@@ -66,7 +66,7 @@ interface PersistedState {
 const execFileAsync = promisify(execFile);
 
 const HISTORY_LIMIT = 50;
-const VERSION = "2026-11-01.3";
+const VERSION = "2026-11-01.4";
 const STATIC_TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
@@ -290,6 +290,9 @@ export async function startServer(initialSettings: RelaunchSettings): Promise<vo
         onWindow,
         onLaunchUpdate,
         onLoopEnd: () => void endRun(current ? outcomeOf(current, watchStopped) : undefined),
+        // a loop that fails (e.g. the wallet cannot cover a copy) must still end its run,
+        // or the next launches are ignored as "already running"
+        onLoopError: (err) => void endRun("error", err.message),
       }),
     );
     void persist();
@@ -421,6 +424,8 @@ export async function startServer(initialSettings: RelaunchSettings): Promise<vo
       await stopWatching();
       startWatching();
     }
+    // a run whose loop is no longer running (it failed before the record was closed) is closed here
+    if (current) await endRun("stopped");
   }
 
   // ---- http ----------------------------------------------------------------

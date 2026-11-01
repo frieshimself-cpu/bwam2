@@ -29,6 +29,8 @@ export interface WatchOptions {
   onWindow?: (launch: Launch, result: WindowResult) => void;
   onLaunchUpdate?: (launch: Launch) => void;
   onLoopEnd?: (launches: Launch[]) => void;
+  /** The loop ended with an error before finishing (e.g. the wallet could not cover a launch). */
+  onLoopError?: (error: Error) => void;
 }
 
 /**
@@ -94,7 +96,10 @@ export function watchWallet(options: WatchOptions): WatchHandle {
           { index: 0, mint: created.mint, signature, at: Date.now(), uri: created.uri, notes: [] },
         )
           .then((launches) => options.onLoopEnd?.(launches))
-          .catch((e: Error) => log.error(`relaunch loop failed: ${e.message}`))
+          .catch((e: Error) => {
+            log.error(`relaunch loop failed: ${e.message}`);
+            options.onLoopError?.(e);
+          })
           .finally(() => {
             busy = false;
             running = null;
